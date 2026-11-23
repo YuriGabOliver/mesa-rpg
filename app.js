@@ -1,0 +1,358 @@
+import { Mapa } from './mapa.js';
+
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ls = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem armazenamento */ } },
+};
+const AL = 'abcdefghjkmnpqrstuvwxyz23456789';
+const novoId = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => AL[b % AL.length]).join('');
+const POLL_ATIVO = 1500, POLL_PARADO = 3500, POLL_ESCONDIDO = 8000, JANELA_ATIVA = 20000; // ms
+const SB_VERSOES = ['2.45.4', '2.39.7']; // supabase-js (UMD) no jsDelivr; tenta a próxima se a primeira não existir
+const CORES = ['#c0392b', '#2e86c1', '#27ae60', '#d4ac0d', '#8e44ad', '#e67e22', '#16a085', '#7f8c8d'];
+
+const E = { m: null, mk: '', pid: ls.get('ml.pid', null) || novoId(16), nome: ls.get('ml.nome', ''), v: 0, est: null, pend: 0,
+  polling: false, again: false, timer: null, falhas: 0, aba: 'dados', sel: null, adiaPainel: false, painel: innerWidth >= 800 };
+ls.set('ml.pid', E.pid);
+window.__E = E; // depuração
+let mapa = null, CFG = null;
+async function carregaConfig() {
+  if (CFG) return CFG;
+  const r = await fetch('/api/config'); const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.erro || 'Servidor não configurado');
+  CFG = j; return CFG;
+}
+const urlImagem = (img) => (img ? `${CFG.url}/storage/v1/object/public/mapas/${E.m}/${img}` : null);
+
+/* ---------- Realtime (opcional): o servidor avisa quando algo muda; o polling vira só rede de segurança ---------- */
+function carregaScript(src) { return new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); }); }
+async function carregaSupabase() {
+  if (window.supabase) return true;
+  for (const v of SB_VERSOES) { try { await carregaScript(`https://cdn.jsdelivr.net/npm/@supabase/supabase-js@${v}/dist/umd/supabase.js`); if (window.supabase) return true; } catch { /* tenta a próxima */ } }
+  return false;
+}
+function fechaRealtime() { E.rtOk = false; if (E.canal && E.sb) { try { E.sb.removeChannel(E.canal); } catch { /* ok */ } } E.canal = null; }
+async function iniciaRealtime(m) {
+  fechaRealtime();
+  if (!CFG || !CFG.anon || !(await carregaSupabase()) || E.m !== m) return;
+  try {
+    E.sb = E.sb || window.supabase.createClient(CFG.url, CFG.anon, { auth: { persistSession: false, autoRefreshToken: false } });
+    let deb = null;
+    E.canal = E.sb.channel(`mesa-${m}`, { config: { broadcast: { self: false } } })
+      .on('broadcast', { event: 'mudou' }, () => { clearTimeout(deb); deb = setTimeout(() => poll(true), 30); })
+      .subscribe((status) => { E.rtOk = status === 'SUBSCRIBED'; if (E.rtOk) poll(true); atualizaSync(); });
+  } catch { E.rtOk = false; }
+}
+function atualizaSync() { const el = $('#m-sync'); if (el) el.textContent = E.rtOk ? 'Sincronização: tempo real ativo.' : 'Sincronização: consulta periódica (alguns segundos de atraso).'; }
+
+/* ---------- utilidades ---------- */
+let toastT;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 3200); }
+async function copiar(texto) {
+  try { await navigator.clipboard.writeText(texto); toast('Link copiado'); }
+  catch { const a = document.createElement('textarea'); a.value = texto; document.body.appendChild(a); a.select(); try { document.execCommand('copy'); toast('Link copiado'); } catch { toast('Copie manualmente'); } a.remove(); }
+}
+async function api(acao, dados = {}) {
+  E.pend++;
+  try {
+    const r = await fetch('/api/mesa', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ acao, m: E.m, mk: E.mk, pid: E.pid, ...dados }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.erro || 'Erro ' + r.status);
+    return j;
+  } finally { E.pend--; }
+}
+const agir = (acao, dados) => { E.ultMud = Date.now(); return api(acao, dados).then((j) => { poll(true); return j; }).catch((e) => { toast(e.message); poll(true); }); };
+const souMestre = () => E.est && E.est.papel === 'mestre';
+const linkJogador = () => `${location.origin}/?m=${E.m}`;
+const linkMestre = () => `${location.origin}/?m=${E.m}#k=${E.mk}`;
+function recentes(atualiza) {
+  let l = ls.get('ml.mesas', []);
+  if (atualiza) { l = l.filter((x) => x.m !== atualiza.m); l.unshift({ ...atualiza, t: Date.now() }); l = l.slice(0, 8); ls.set('ml.mesas', l); }
+  return l;
+}
+
+/* ---------- home ---------- */
+function mostraHome(erro) {
+  $('#mesa').hidden = true; $('#home').hidden = false;
+  history.replaceState(null, '', '/');
+  const sp = new URLSearchParams(location.search);
+  $('#h-convite').hidden = true; $('#h-principal').hidden = false;
+  $('#h-nome').value = E.nome;
+  const l = recentes();
+  $('#h-recentes').hidden = !l.length;
+  $('#h-lista').innerHTML = l.map((x) => `<li><button class="b" data-m="${esc(x.m)}">${esc(x.nome)} <small>(${x.mestre ? 'mestre' : 'jogador'})</small></button></li>`).join('');
+  const er = $('#h-erro'); er.hidden = !erro; er.textContent = erro || '';
+  sp.delete('m');
+}
+$('#h-lista').addEventListener('click', (e) => { const b = e.target.closest('button[data-m]'); if (b) abreMesa(b.dataset.m, ls.get('ml.mk.' + b.dataset.m, '')); });
+$('#h-criar').onclick = async () => {
+  const nome = $('#h-nome').value.trim(); if (!nome) return mostraErro('Escreva o seu nome.');
+  E.nome = nome; ls.set('ml.nome', nome);
+  try {
+    const r = await fetch('/api/mesa', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ acao: 'criar', nome: $('#h-mesa').value.trim() || 'Minha mesa' }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.erro || 'Erro ' + r.status);
+    ls.set('ml.mk.' + j.m, j.mk); abreMesa(j.m, j.mk);
+  } catch (e) { mostraErro(e.message); }
+};
+function mostraErro(t) { const er = $('#h-erro'); er.hidden = false; er.textContent = t; }
+$('#h-entrar').onclick = () => {
+  const nome = $('#h-nome').value.trim(); if (!nome) return mostraErro('Escreva o seu nome.');
+  E.nome = nome; ls.set('ml.nome', nome);
+  const txt = $('#h-cod').value.trim(); let m = '', mk = '';
+  try { const u = new URL(txt); m = u.searchParams.get('m') || ''; mk = new URLSearchParams(u.hash.slice(1)).get('k') || ''; } catch { m = txt; }
+  m = m.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!m) return mostraErro('Cole o link ou o código da mesa.');
+  if (mk) ls.set('ml.mk.' + m, mk);
+  abreMesa(m, mk || ls.get('ml.mk.' + m, ''));
+};
+$('#hc-entrar').onclick = () => {
+  const nome = $('#hc-nome').value.trim(); if (!nome) return mostraErro('Escreva o seu nome.');
+  E.nome = nome; ls.set('ml.nome', nome); abreMesa(E.convite, ls.get('ml.mk.' + E.convite, ''));
+};
+
+/* ---------- entrar na mesa ---------- */
+async function abreMesa(m, mk) {
+  E.m = m; E.mk = mk || ''; E.v = 0; E.est = null; E.falhas = 0;
+  $('#home').hidden = true; $('#mesa').hidden = false;
+  history.replaceState(null, '', `/?m=${m}`);
+  if (!mapa) iniciaMapa();
+  mapa.setImagem(null); mapa.setTokens([]); mapa.setNevoa([]);
+  $('#painel').classList.toggle('fechado', !E.painel);
+  try {
+    await carregaConfig();
+    await api('entrar', { pnome: E.nome });
+    await poll(true);
+    if (!E.est) return;
+    recentes({ m, nome: E.est.nome, mestre: souMestre() });
+    agendar(); iniciaRealtime(m);
+  } catch (e) { sair(e.message); }
+}
+function sair(msg) {
+  clearTimeout(E.timer); fechaRealtime(); E.m = null; E.est = null;
+  mostraHome(msg);
+}
+
+function iniciaMapa() {
+  mapa = new Mapa($('#cv'), {
+    podeMover: (t) => t.dono === E.pid,
+    onMover: (id, x, y) => { api('tokenMove', { id, x, y }).then(() => poll(true)).catch((e) => { toast(e.message); poll(true); }); },
+    onNevoa: (r) => agir('nevoaAdd', { rects: [r] }),
+    onSelecionar: (id) => { E.sel = id; marcaSel(); },
+    onDuplo: () => { E.aba = 'tokens'; desenhaPainel(); if (!E.painel) alternaPainel(true); },
+  });
+  window.__mapa = mapa; // útil para depuração no console
+}
+
+/* ---------- sincronização (polling leve) ---------- */
+async function poll(forcar = false) {
+  if (!E.m) return;
+  if (E.polling) { if (forcar) E.again = true; return; }
+  E.polling = true;
+  try {
+    const r = await fetch(`/api/mesa?m=${E.m}&v=${forcar ? 0 : E.v}`, { headers: { 'x-mk': E.mk || '', 'x-pid': E.pid }, cache: 'no-store' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { if (r.status === 404) { sair('Mesa não encontrada. Confira o link.'); return; } throw new Error(j.erro || r.status); }
+    E.falhas = 0; $('#t-off').hidden = true;
+    if (!j.mesmo && !(E.pend > 0 || mapa.arrastando)) aplica(j);
+  } catch { if (++E.falhas >= 3) $('#t-off').hidden = false; }
+  finally { E.polling = false; if (E.again) { E.again = false; poll(true); } }
+}
+function agendar() {
+  clearTimeout(E.timer);
+  const recente = Date.now() - (E.ultMud || 0) < JANELA_ATIVA;
+  E.timer = setTimeout(async () => { await poll(); if (E.m) agendar(); }, document.hidden ? (E.rtOk ? 30000 : POLL_ESCONDIDO) : E.rtOk ? 20000 : recente ? POLL_ATIVO : POLL_PARADO);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && E.m) poll(true); });
+
+function aplica(j) {
+  const ant = E.est; E.est = j; E.v = j.v; E.ultMud = Date.now();
+  mapa.setMestre(j.papel === 'mestre');
+  if (!ant || ant.cena.img !== j.cena.img) mapa.setImagem(urlImagem(j.cena.img));
+  mapa.setCena(j.cena); mapa.setTokens(j.tokens); mapa.setNevoa(j.nevoa);
+  if (E.sel) mapa.selecionar(E.sel, false);
+  $('#t-nome').textContent = j.nome;
+  $('#t-papel').textContent = j.papel === 'mestre' ? 'Mestre' : 'Jogador';
+  $('#tool-nevoa').hidden = j.papel !== 'mestre';
+  if (!ant || ant.papel !== j.papel) desenhaPainel(); else atualizaPainel();
+}
+
+/* ---------- barra de ferramentas ---------- */
+$('#tools').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.id === 'tool-centro') return mapa.centralizar();
+  mapa.setFerramenta(b.dataset.f);
+  document.querySelectorAll('#tools [data-f]').forEach((x) => x.classList.toggle('on', x === b));
+  mapa.c.style.cursor = b.dataset.f === 'mover' ? 'grab' : 'crosshair';
+});
+function alternaPainel(forca) { E.painel = forca === undefined ? !E.painel : forca; $('#painel').classList.toggle('fechado', !E.painel); }
+$('#t-painel').onclick = () => alternaPainel();
+$('#t-conv').onclick = () => { E.aba = 'mesa'; desenhaPainel(); alternaPainel(true); };
+
+/* ---------- painel ---------- */
+function abas() { return [['dados', 'Dados'], ['tokens', 'Tokens'], ...(souMestre() ? [['mapa', 'Mapa']] : []), ['mesa', 'Mesa']]; }
+function desenhaPainel() {
+  if (!abas().some((a) => a[0] === E.aba)) E.aba = 'dados';
+  $('#abas').innerHTML = abas().map(([k, n]) => `<button data-a="${k}" class="${k === E.aba ? 'on' : ''}">${n}</button>`).join('');
+  const c = $('#conteudo');
+  if (E.aba === 'dados') c.innerHTML = `
+    <div class="sec"><h3>Rolar dados</h3>
+      <div class="dados">${['1d4', '1d6', '1d8', '1d10', '1d12', '1d20', '1d100'].map((d) => `<button class="b" data-d="${d}">${d.slice(1)}</button>`).join('')}</div>
+      <form id="f-dado"><input id="i-dado" placeholder="Ex.: 2d6+3" autocomplete="off" maxlength="40"><button class="b prim" style="margin:0">Rolar</button></form>
+    </div><div class="sec"><h3>Histórico</h3><ul id="log"></ul></div>`;
+  else if (E.aba === 'tokens') c.innerHTML = `
+    <div class="sec"><h3>Novo token</h3>
+      <div class="f-add"><input type="color" id="a-cor" value="${CORES[(E.est ? E.est.tokens.length : 0) % CORES.length]}"><input class="n" id="a-nome" maxlength="12" placeholder="Nome">
+        <select id="a-tam"><option value="1">1×1</option><option value="2">2×2</option><option value="3">3×3</option></select>
+        ${souMestre() ? '<select id="a-dono"></select>' : ''}<button class="b prim" id="a-ok">Adicionar</button></div>
+      <p class="dica">Aparece no centro da sua tela. Arraste para posicionar. Toque duas vezes num token do mapa para editar aqui.</p>
+    </div><div class="sec"><h3>Tokens na mesa</h3><ul id="lista-tk"></ul></div>`;
+  else if (E.aba === 'mapa') c.innerHTML = `
+    <div class="sec"><h3>Imagem do mapa</h3>
+      <label class="b" style="display:block;text-align:center;margin:0">Subir imagem<input type="file" id="f-img" accept="image/*" hidden></label>
+      <p class="dica" id="img-st">Aceita PNG, JPG ou WebP. É reduzida e comprimida automaticamente (até 2560 px).</p></div>
+    <div class="sec"><h3>Grade</h3>
+      <label class="linha"><input type="checkbox" id="c-grade"> Mostrar grade</label>
+      <label class="linha"><input type="checkbox" id="c-snap"> Encaixar tokens na casa</label>
+      <label>Tamanho da casa: <b id="c-size-v"></b> px<input type="range" id="c-size" min="20" max="200"></label>
+      <label>Metros por casa<input type="number" id="c-m" min="0.1" step="0.1"></label></div>
+    <div class="sec"><h3>Névoa de guerra</h3>
+      <label class="linha"><input type="checkbox" id="c-nevoa"> Névoa ativa</label>
+      <button class="b" id="b-cobrir" style="margin-top:8px">Cobrir tudo de novo</button>
+      <p class="dica">Com a névoa ativa, os jogadores só veem o que você revelar com a ferramenta “Revelar”. Para você ela aparece translúcida.</p></div>`;
+  else c.innerHTML = `
+    <div class="sec"><h3>Seu nome</h3><input id="m-nome" maxlength="20" value="${esc(E.nome)}" style="width:100%"></div>
+    <div class="sec"><h3>Convidar jogadores</h3>
+      <div class="copia"><input readonly id="m-lj" value="${esc(linkJogador())}"><button class="b" data-cp="j">Copiar</button></div>
+      <p class="dica">Quem abrir esse link entra como jogador.</p>
+      ${souMestre() ? `<h3 style="margin-top:14px">Link do mestre</h3>
+      <div class="copia"><input readonly id="m-lm" value="${esc(linkMestre())}"><button class="b" data-cp="m">Copiar</button></div>
+      <div class="aviso-box">Guarde este link: ele dá controle total da mesa e é a única forma de voltar como mestre em outro aparelho. Não envie para jogadores.</div>` : ''}
+    </div><div class="sec"><h3>Na mesa agora</h3><ul id="jogs"></ul><p class="dica" id="m-sync"></p></div>
+    <button class="b" id="m-sair">Sair da mesa</button>`;
+  atualizaPainel(true);
+}
+function podeEditar() { const f = document.activeElement; return !(f && f.closest && f.closest('#lista-tk') && /INPUT|SELECT/.test(f.tagName)); }
+function atualizaPainel(forca) {
+  const j = E.est; if (!j) return;
+  if (!forca && !podeEditar()) { E.adiaPainel = true; return; }
+  E.adiaPainel = false;
+  if (E.aba === 'dados') {
+    $('#log').innerHTML = [...j.log].reverse().map((l) => `<li><b>${esc(l.a)}</b> <small>${esc(l.e)}</small><span class="tot">${l.s}</span><span class="det">${esc(detalhe(l.d))}</span></li>`).join('') || '<li class="dica">Nenhuma rolagem ainda.</li>';
+  } else if (E.aba === 'tokens') {
+    const dono = $('#a-dono');
+    if (dono) { const v = dono.value; dono.innerHTML = '<option value="">Mestre (NPC)</option>' + j.jog.filter((x) => !x.mestre).map((x) => `<option value="${esc(x.id)}">${esc(x.nome)}</option>`).join(''); dono.value = v; }
+    $('#lista-tk').innerHTML = j.tokens.map((t) => {
+      const meu = souMestre() || t.dono === E.pid, nomeDono = t.dono ? (j.jog.find((x) => x.id === t.dono) || {}).nome || '?' : 'Mestre';
+      return `<li data-id="${esc(t.id)}" class="${E.sel === t.id ? 'sel' : ''}">
+        ${meu ? `<input type="color" class="c" value="${esc(t.cor)}"><input class="n" maxlength="12" value="${esc(t.nome)}">
+          <select class="tam">${[1, 2, 3, 4].map((n) => `<option ${n === t.tam ? 'selected' : ''} value="${n}">${n}×${n}</option>`).join('')}</select>`
+        : `<span style="width:14px;height:14px;border-radius:50%;background:${esc(t.cor)};display:inline-block"></span><span class="ro">${esc(t.nome)}</span>`}
+        ${souMestre() ? `<select class="dono"><option value="">Mestre</option>${j.jog.filter((x) => !x.mestre).map((x) => `<option value="${esc(x.id)}" ${x.id === t.dono ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}</select>
+          <button class="b mini" data-act="vis" title="Mostrar/ocultar para jogadores">${t.vis === false ? 'Oculto' : 'Visível'}</button>` : `<small>${esc(nomeDono)}</small>`}
+        <button class="b mini" data-act="ir" title="Ir até o token">Ir</button>
+        ${meu ? '<button class="b mini" data-act="del" title="Excluir">✕</button>' : ''}</li>`;
+    }).join('') || '<li class="dica">Nenhum token ainda.</li>';
+  } else if (E.aba === 'mapa') {
+    const g = j.cena.grade;
+    $('#c-grade').checked = g.on; $('#c-snap').checked = g.snap; $('#c-size').value = g.size; $('#c-size-v').textContent = g.size;
+    if (document.activeElement !== $('#c-m')) $('#c-m').value = g.m;
+    $('#c-nevoa').checked = j.cena.nevoa;
+  } else if (E.aba === 'mesa') {
+    atualizaSync();
+    $('#jogs').innerHTML = j.jog.map((x) => `<li>${esc(x.nome)} ${x.mestre ? '<span class="tag">Mestre</span>' : ''} ${x.id === E.pid ? '<small>(você)</small>' : ''}</li>`).join('');
+  }
+}
+function detalhe(d) {
+  return (d || []).map((p, i) => {
+    const sinal = p.s < 0 ? '−' : (i ? '+' : ''), corpo = p.k !== undefined ? p.k : `[${p.r.join(', ')}]`;
+    return (i || p.s < 0 ? ' ' : '') + sinal + (sinal ? ' ' : '') + corpo;
+  }).join('').trim();
+}
+function marcaSel() { document.querySelectorAll('#lista-tk li').forEach((li) => li.classList.toggle('sel', li.dataset.id === E.sel)); }
+$('#conteudo').addEventListener('focusout', () => setTimeout(() => { if (E.adiaPainel) atualizaPainel(); }, 50));
+
+/* eventos do painel (delegação) */
+$('#abas').addEventListener('click', (e) => { const b = e.target.closest('button[data-a]'); if (b) { E.aba = b.dataset.a; desenhaPainel(); } });
+const painel = $('#conteudo');
+painel.addEventListener('click', async (e) => {
+  const t = e.target.closest('button'); if (!t) return;
+  if (t.dataset.d) return agir('rolar', { expr: t.dataset.d });
+  if (t.dataset.cp) return copiar(t.dataset.cp === 'j' ? linkJogador() : linkMestre());
+  if (t.id === 'm-sair') return sair();
+  if (t.id === 'b-cobrir') return agir('nevoaCobrir');
+  if (t.id === 'a-ok') {
+    const c = mapa.centro(), tam = +$('#a-tam').value, p = mapa.encaixa({ x: c.x, y: c.y, tam });
+    await agir('tokenAdd', { nome: $('#a-nome').value || 'Token', cor: $('#a-cor').value, tam, x: p.x, y: p.y, dono: $('#a-dono') ? $('#a-dono').value : undefined });
+    $('#a-nome').value = ''; return;
+  }
+  const li = t.closest('li[data-id]'); if (!li) return;
+  const id = li.dataset.id, tk = E.est.tokens.find((x) => x.id === id);
+  if (t.dataset.act === 'del') agir('tokenDel', { id });
+  else if (t.dataset.act === 'vis') agir('tokenEdit', { id, vis: tk.vis === false });
+  else if (t.dataset.act === 'ir' && tk) { mapa.irPara(tk.x, tk.y); mapa.selecionar(id); E.sel = id; marcaSel(); if (innerWidth < 800) alternaPainel(false); }
+});
+painel.addEventListener('submit', (e) => {
+  e.preventDefault();
+  if (e.target.id === 'f-dado') { const v = $('#i-dado').value.trim(); if (v) { agir('rolar', { expr: v }); $('#i-dado').value = ''; } }
+});
+painel.addEventListener('change', async (e) => {
+  const el = e.target, li = el.closest('li[data-id]');
+  if (li) {
+    const id = li.dataset.id;
+    if (el.classList.contains('n')) agir('tokenEdit', { id, nome: el.value });
+    else if (el.classList.contains('c')) agir('tokenEdit', { id, cor: el.value });
+    else if (el.classList.contains('tam')) agir('tokenEdit', { id, tam: +el.value });
+    else if (el.classList.contains('dono')) agir('tokenEdit', { id, dono: el.value });
+    return;
+  }
+  if (el.id === 'm-nome') { E.nome = el.value.trim() || E.nome; ls.set('ml.nome', E.nome); return agir('entrar', { pnome: E.nome }); }
+  if (el.id === 'f-img') return sobeImagem(el.files[0]);
+  if (['c-grade', 'c-snap', 'c-size', 'c-m'].includes(el.id)) {
+    return agir('cena', { grade: { on: $('#c-grade').checked, snap: $('#c-snap').checked, size: +$('#c-size').value, m: +$('#c-m').value || 1.5 } });
+  }
+  if (el.id === 'c-nevoa') return agir('cena', { nevoa: el.checked, grade: E.est.cena.grade });
+});
+painel.addEventListener('input', (e) => { if (e.target.id === 'c-size') $('#c-size-v').textContent = e.target.value; });
+
+/* ---------- upload da imagem do mapa ---------- */
+async function comprimir(file) {
+  const bmp = await createImageBitmap(file);
+  let lado = 2560;
+  for (let tent = 0; tent < 6; tent++) {
+    const k = Math.min(1, lado / Math.max(bmp.width, bmp.height)), w = Math.round(bmp.width * k), h = Math.round(bmp.height * k);
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h; cv.getContext('2d').drawImage(bmp, 0, 0, w, h);
+    let q = 0.85;
+    for (let i = 0; i < 4; i++) {
+      let blob = await new Promise((r) => cv.toBlob(r, 'image/webp', q));
+      if (!blob || blob.type !== 'image/webp') blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', q));
+      if (blob && blob.size <= 2200000) return { blob, w, h };
+      q -= 0.15;
+    }
+    lado *= 0.75;
+  }
+  throw new Error('Imagem grande demais, tente uma menor');
+}
+async function sobeImagem(file) {
+  if (!file) return;
+  const st = $('#img-st'); st.textContent = 'Preparando a imagem…';
+  try {
+    const { blob, w, h } = await comprimir(file);
+    st.textContent = `Enviando (${(blob.size / 1024).toFixed(0)} KB)…`;
+    const dados = await new Promise((res, rej) => { const f = new FileReader(); f.onload = () => res(String(f.result).split(',')[1]); f.onerror = rej; f.readAsDataURL(blob); });
+    await api('imagem', { dados, mime: blob.type, w, h });
+    st.textContent = 'Imagem enviada.'; poll(true);
+  } catch (e) { st.textContent = 'Falhou: ' + e.message; }
+}
+
+/* ---------- início ---------- */
+(function inicio() {
+  const sp = new URLSearchParams(location.search), m = (sp.get('m') || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const k = new URLSearchParams(location.hash.slice(1)).get('k');
+  if (m && k) { ls.set('ml.mk.' + m, k); history.replaceState(null, '', `/?m=${m}`); }
+  if (!m) return mostraHome();
+  if (E.nome) return abreMesa(m, ls.get('ml.mk.' + m, ''));
+  E.convite = m;
+  $('#h-principal').hidden = true; $('#h-convite').hidden = false; $('#hc-nome').focus();
+})();
