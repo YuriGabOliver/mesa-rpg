@@ -13,7 +13,7 @@ const SB_VERSOES = ['2.45.4', '2.39.7']; // supabase-js (UMD) no jsDelivr; tenta
 const CORES = ['#c0392b', '#2e86c1', '#27ae60', '#d4ac0d', '#8e44ad', '#e67e22', '#16a085', '#7f8c8d'];
 
 const E = { m: null, mk: '', pid: ls.get('ml.pid', null) || novoId(16), nome: ls.get('ml.nome', ''), v: 0, est: null, pend: 0,
-  polling: false, again: false, timer: null, falhas: 0, aba: 'dados', sel: null, adiaPainel: false, painel: innerWidth >= 800 };
+  vendo: '', polling: false, again: false, timer: null, falhas: 0, aba: 'dados', sel: null, adiaPainel: false, painel: innerWidth >= 800 };
 ls.set('ml.pid', E.pid);
 window.__E = E; // depuração
 let mapa = null, CFG = null;
@@ -23,6 +23,7 @@ async function carregaConfig() {
   if (!r.ok) throw new Error(j.erro || 'Servidor não configurado');
   CFG = j; return CFG;
 }
+const urlToken = (t) => (t && t.img ? `${CFG.url}/storage/v1/object/public/mapas/${E.m}/${t.img}` : null);
 const urlImagem = (img) => (img ? `${CFG.url}/storage/v1/object/public/mapas/${E.m}/${img}` : null);
 
 /* ---------- Realtime (opcional): o servidor avisa quando algo muda; o polling vira só rede de segurança ---------- */
@@ -56,7 +57,7 @@ async function copiar(texto) {
 async function api(acao, dados = {}) {
   E.pend++;
   try {
-    const r = await fetch('/api/mesa', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ acao, m: E.m, mk: E.mk, pid: E.pid, ...dados }) });
+    const r = await fetch('/api/mesa', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ acao, m: E.m, mk: E.mk, pid: E.pid, c: E.vendo || undefined, ...dados }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.erro || 'Erro ' + r.status);
     return j;
@@ -114,7 +115,7 @@ $('#hc-entrar').onclick = () => {
 
 /* ---------- entrar na mesa ---------- */
 async function abreMesa(m, mk) {
-  E.m = m; E.mk = mk || ''; E.v = 0; E.est = null; E.falhas = 0;
+  E.m = m; E.mk = mk || ''; E.v = 0; E.est = null; E.falhas = 0; E.vendo = ls.get('ml.vendo.' + m, '');
   $('#home').hidden = true; $('#mesa').hidden = false;
   history.replaceState(null, '', `/?m=${m}`);
   if (!mapa) iniciaMapa();
@@ -138,7 +139,8 @@ function iniciaMapa() {
   mapa = new Mapa($('#cv'), {
     podeMover: (t) => t.dono === E.pid,
     onMover: (id, x, y) => { api('tokenMove', { id, x, y }).then(() => poll(true)).catch((e) => { toast(e.message); poll(true); }); },
-    onNevoa: (r) => agir('nevoaAdd', { rects: [r] }),
+    onNevoa: (op) => agir('nevoaAdd', { ops: [op] }),
+    urlToken,
     onSelecionar: (id) => { E.sel = id; marcaSel(); },
     onDuplo: () => { E.aba = 'tokens'; desenhaPainel(); if (!E.painel) alternaPainel(true); },
   });
@@ -151,7 +153,7 @@ async function poll(forcar = false) {
   if (E.polling) { if (forcar) E.again = true; return; }
   E.polling = true;
   try {
-    const r = await fetch(`/api/mesa?m=${E.m}&v=${forcar ? 0 : E.v}`, { headers: { 'x-mk': E.mk || '', 'x-pid': E.pid }, cache: 'no-store' });
+    const r = await fetch(`/api/mesa?m=${E.m}&v=${forcar ? 0 : E.v}&c=${encodeURIComponent(E.vendo || '')}`, { headers: { 'x-mk': E.mk || '', 'x-pid': E.pid }, cache: 'no-store' });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { if (r.status === 404) { sair('Mesa não encontrada. Confira o link.'); return; } throw new Error(j.erro || r.status); }
     E.falhas = 0; $('#t-off').hidden = true;
@@ -168,15 +170,29 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && E.
 
 function aplica(j) {
   const ant = E.est; E.est = j; E.v = j.v; E.ultMud = Date.now();
+  const chave = j.vendo || j.cenaId, antChave = ant && (ant.vendo || ant.cenaId);
   mapa.setMestre(j.papel === 'mestre');
-  if (!ant || ant.cena.img !== j.cena.img) mapa.setImagem(urlImagem(j.cena.img));
+  if (j.papel === 'mestre' && j.vendo !== E.vendo) { E.vendo = j.vendo; ls.set('ml.vendo.' + E.m, j.vendo); }
+  if (!ant || ant.cena.img !== j.cena.img || antChave !== chave) mapa.setImagem(urlImagem(j.cena.img));
   mapa.setCena(j.cena); mapa.setTokens(j.tokens); mapa.setNevoa(j.nevoa);
+  if (antChave && antChave !== chave) {
+    E.sel = null; mapa.selecionar(null, false); mapa.centralizar();
+    if (j.papel !== 'mestre') toast('O mestre levou a mesa para outra cena');
+  }
   if (E.sel) mapa.selecionar(E.sel, false);
   $('#t-nome').textContent = j.nome;
   $('#t-papel').textContent = j.papel === 'mestre' ? 'Mestre' : 'Jogador';
+  const tc = $('#t-cena'); tc.hidden = j.papel !== 'mestre'; if (!tc.hidden) tc.textContent = j.cenaNome;
   $('#tool-nevoa').hidden = j.papel !== 'mestre';
+  atualizaFaixa();
   if (!ant || ant.papel !== j.papel) desenhaPainel(); else atualizaPainel();
 }
+function atualizaFaixa() {
+  const j = E.est, f = $('#faixa'), longe = !!j && j.papel === 'mestre' && j.vendo !== j.ativa;
+  f.hidden = !longe;
+  if (longe) { const at = (j.cenas.find((x) => x.id === j.ativa) || {}).nome || '?'; $('#faixa-txt').textContent = `Você está em “${j.cenaNome}”. Os jogadores estão em “${at}” e não veem esta cena.`; }
+}
+$('#faixa-puxar').onclick = () => agir('cenaPuxar', { cenaId: E.est.vendo });
 
 /* ---------- barra de ferramentas ---------- */
 $('#tools').addEventListener('click', (e) => {
@@ -185,13 +201,22 @@ $('#tools').addEventListener('click', (e) => {
   mapa.setFerramenta(b.dataset.f);
   document.querySelectorAll('#tools [data-f]').forEach((x) => x.classList.toggle('on', x === b));
   mapa.c.style.cursor = b.dataset.f === 'mover' ? 'grab' : 'crosshair';
+  $('#tools-nevoa').hidden = b.dataset.f !== 'nevoa';
 });
+$('#tools-nevoa').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.id === 'n-desfaz') return agir('nevoaDesfazer');
+  const g = b.dataset.na ? 'data-na' : 'data-nm'; if (!b.dataset.na && !b.dataset.nm) return;
+  document.querySelectorAll(`#tools-nevoa [${g}]`).forEach((x) => x.classList.toggle('on', x === b));
+  mapa.setNevoaFerr(b.dataset.na ? { acao: b.dataset.na } : { modo: b.dataset.nm });
+});
+$('#n-raio').addEventListener('input', (e) => mapa.setNevoaFerr({ raio: +e.target.value }));
 function alternaPainel(forca) { E.painel = forca === undefined ? !E.painel : forca; $('#painel').classList.toggle('fechado', !E.painel); }
 $('#t-painel').onclick = () => alternaPainel();
 $('#t-conv').onclick = () => { E.aba = 'mesa'; desenhaPainel(); alternaPainel(true); };
 
 /* ---------- painel ---------- */
-function abas() { return [['dados', 'Dados'], ['tokens', 'Tokens'], ...(souMestre() ? [['mapa', 'Mapa']] : []), ['mesa', 'Mesa']]; }
+function abas() { return [['dados', 'Dados'], ['tokens', 'Tokens'], ...(souMestre() ? [['cenas', 'Cenas'], ['mapa', 'Mapa']] : []), ['mesa', 'Mesa']]; }
 function desenhaPainel() {
   if (!abas().some((a) => a[0] === E.aba)) E.aba = 'dados';
   $('#abas').innerHTML = abas().map(([k, n]) => `<button data-a="${k}" class="${k === E.aba ? 'on' : ''}">${n}</button>`).join('');
@@ -205,9 +230,16 @@ function desenhaPainel() {
     <div class="sec"><h3>Novo token</h3>
       <div class="f-add"><input type="color" id="a-cor" value="${CORES[(E.est ? E.est.tokens.length : 0) % CORES.length]}"><input class="n" id="a-nome" maxlength="12" placeholder="Nome">
         <select id="a-tam"><option value="1">1×1</option><option value="2">2×2</option><option value="3">3×3</option></select>
+        <label class="b mini" style="margin:0;display:inline-flex;align-items:center">Imagem<input type="file" id="a-img" accept="image/*" hidden></label><span id="a-img-nome" class="dica" style="margin:0"></span>
         ${souMestre() ? '<select id="a-dono"></select>' : ''}<button class="b prim" id="a-ok">Adicionar</button></div>
-      <p class="dica">Aparece no centro da sua tela. Arraste para posicionar. Toque duas vezes num token do mapa para editar aqui.</p>
+      <p class="dica">Aparece no centro da sua tela. Arraste para posicionar. Para trocar a imagem de um token, toque na bolinha dele na lista abaixo.</p>
     </div><div class="sec"><h3>Tokens na mesa</h3><ul id="lista-tk"></ul></div>`;
+  else if (E.aba === 'cenas') c.innerHTML = `
+    <div class="sec"><h3>Cenas</h3>
+      <p class="dica">Os jogadores só veem a cena em que você os colocar com “Puxar jogadores”. Você pode abrir e preparar outras cenas sem que eles saibam.</p>
+      <ul id="lista-cenas"></ul>
+      <div class="f-add"><input class="n" id="cn-nome" maxlength="30" placeholder="Nome da nova cena"><button class="b prim" id="cn-ok">Nova cena</button></div>
+    </div>`;
   else if (E.aba === 'mapa') c.innerHTML = `
     <div class="sec"><h3>Imagem do mapa</h3>
       <label class="b" style="display:block;text-align:center;margin:0">Subir imagem<input type="file" id="f-img" accept="image/*" hidden></label>
@@ -219,8 +251,8 @@ function desenhaPainel() {
       <label>Metros por casa<input type="number" id="c-m" min="0.1" step="0.1"></label></div>
     <div class="sec"><h3>Névoa de guerra</h3>
       <label class="linha"><input type="checkbox" id="c-nevoa"> Névoa ativa</label>
-      <button class="b" id="b-cobrir" style="margin-top:8px">Cobrir tudo de novo</button>
-      <p class="dica">Com a névoa ativa, os jogadores só veem o que você revelar com a ferramenta “Revelar”. Para você ela aparece translúcida.</p></div>`;
+      <div class="f-add" style="margin-top:8px"><button class="b" id="b-cobrir">Cobrir tudo de novo</button><button class="b" id="b-desfaz">Desfazer última</button></div>
+      <p class="dica">Com a névoa ativa, os jogadores só veem o que você revelar com a ferramenta “Revelar” (retângulo, círculo ou pincel; também dá para “Esconder” de novo). Para você ela aparece translúcida. Nos tokens, o campo “Visão” revela sozinho o entorno do token.</p></div>`;
   else c.innerHTML = `
     <div class="sec"><h3>Seu nome</h3><input id="m-nome" maxlength="20" value="${esc(E.nome)}" style="width:100%"></div>
     <div class="sec"><h3>Convidar jogadores</h3>
@@ -245,15 +277,26 @@ function atualizaPainel(forca) {
     if (dono) { const v = dono.value; dono.innerHTML = '<option value="">Mestre (NPC)</option>' + j.jog.filter((x) => !x.mestre).map((x) => `<option value="${esc(x.id)}">${esc(x.nome)}</option>`).join(''); dono.value = v; }
     $('#lista-tk').innerHTML = j.tokens.map((t) => {
       const meu = souMestre() || t.dono === E.pid, nomeDono = t.dono ? (j.jog.find((x) => x.id === t.dono) || {}).nome || '?' : 'Mestre';
+      const u = urlToken(t), mini = u ? `<img src="${esc(u)}" alt="">` : `<span class="dot" style="background:${esc(t.cor)}"></span>`;
       return `<li data-id="${esc(t.id)}" class="${E.sel === t.id ? 'sel' : ''}">
-        ${meu ? `<input type="color" class="c" value="${esc(t.cor)}"><input class="n" maxlength="12" value="${esc(t.nome)}">
+        ${meu ? `<label class="thumb" title="Trocar a imagem do token">${mini}<input type="file" class="timg" accept="image/*" hidden></label>
+          <input class="n" maxlength="12" value="${esc(t.nome)}">
+          <input type="color" class="c" value="${esc(t.cor)}" title="Cor da borda">
           <select class="tam">${[1, 2, 3, 4].map((n) => `<option ${n === t.tam ? 'selected' : ''} value="${n}">${n}×${n}</option>`).join('')}</select>`
-        : `<span style="width:14px;height:14px;border-radius:50%;background:${esc(t.cor)};display:inline-block"></span><span class="ro">${esc(t.nome)}</span>`}
+        : `<span class="thumb">${mini}</span><span class="ro">${esc(t.nome)}</span>`}
         ${souMestre() ? `<select class="dono"><option value="">Mestre</option>${j.jog.filter((x) => !x.mestre).map((x) => `<option value="${esc(x.id)}" ${x.id === t.dono ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}</select>
+          <select class="visao" title="Revela a névoa em volta do token">${[[0, 'Sem visão'], [3, 'Visão 3'], [6, 'Visão 6'], [9, 'Visão 9'], [12, 'Visão 12']].map(([n, r]) => `<option value="${n}" ${(t.visao || 0) === n ? 'selected' : ''}>${r}</option>`).join('')}</select>
           <button class="b mini" data-act="vis" title="Mostrar/ocultar para jogadores">${t.vis === false ? 'Oculto' : 'Visível'}</button>` : `<small>${esc(nomeDono)}</small>`}
         <button class="b mini" data-act="ir" title="Ir até o token">Ir</button>
+        ${meu && t.img ? '<button class="b mini" data-act="rmimg" title="Tirar a imagem">Sem img</button>' : ''}
         ${meu ? '<button class="b mini" data-act="del" title="Excluir">✕</button>' : ''}</li>`;
     }).join('') || '<li class="dica">Nenhum token ainda.</li>';
+  } else if (E.aba === 'cenas') {
+    $('#lista-cenas').innerHTML = (j.cenas || []).map((x) => `<li data-cid="${esc(x.id)}" class="${x.id === j.vendo ? 'vendo' : ''}">
+      <input class="cn" maxlength="30" value="${esc(x.nome)}">
+      ${x.id === j.ativa ? '<span class="tag verde">Jogadores aqui</span>' : ''}${x.id === j.vendo ? '<span class="tag azul">Você está aqui</span>' : ''}
+      ${x.id === j.vendo ? '' : '<button class="b mini" data-act="ver">Abrir</button>'}
+      ${x.id === j.ativa ? '' : '<button class="b mini" data-act="puxar">Puxar jogadores</button><button class="b mini" data-act="cdel" title="Excluir cena">✕</button>'}</li>`).join('');
   } else if (E.aba === 'mapa') {
     const g = j.cena.grade;
     $('#c-grade').checked = g.on; $('#c-snap').checked = g.snap; $('#c-size').value = g.size; $('#c-size-v').textContent = g.size;
@@ -282,14 +325,31 @@ painel.addEventListener('click', async (e) => {
   if (t.dataset.cp) return copiar(t.dataset.cp === 'j' ? linkJogador() : linkMestre());
   if (t.id === 'm-sair') return sair();
   if (t.id === 'b-cobrir') return agir('nevoaCobrir');
+  if (t.id === 'b-desfaz') return agir('nevoaDesfazer');
+  if (t.id === 'cn-ok') {
+    const r = await api('cenaNova', { nome: $('#cn-nome').value }).catch((er) => { toast(er.message); });
+    if (r && r.id) { E.vendo = r.id; ls.set('ml.vendo.' + E.m, r.id); $('#cn-nome').value = ''; }
+    return poll(true);
+  }
+  const lc = t.closest('li[data-cid]');
+  if (lc) {
+    const cid = lc.dataset.cid;
+    if (t.dataset.act === 'ver') { E.vendo = cid; ls.set('ml.vendo.' + E.m, cid); E.sel = null; return poll(true); }
+    if (t.dataset.act === 'puxar') return agir('cenaPuxar', { cenaId: cid });
+    if (t.dataset.act === 'cdel' && confirm('Excluir esta cena, com os tokens e a névoa dela?')) return agir('cenaExcluir', { cenaId: cid });
+    return;
+  }
   if (t.id === 'a-ok') {
-    const c = mapa.centro(), tam = +$('#a-tam').value, p = mapa.encaixa({ x: c.x, y: c.y, tam });
-    await agir('tokenAdd', { nome: $('#a-nome').value || 'Token', cor: $('#a-cor').value, tam, x: p.x, y: p.y, dono: $('#a-dono') ? $('#a-dono').value : undefined });
-    $('#a-nome').value = ''; return;
+    const c = mapa.centro(), tam = +$('#a-tam').value, p = mapa.encaixa({ x: c.x, y: c.y, tam }), arq = $('#a-img').files[0];
+    const r = await agir('tokenAdd', { nome: $('#a-nome').value || 'Token', cor: $('#a-cor').value, tam, x: p.x, y: p.y, dono: $('#a-dono') ? $('#a-dono').value : undefined });
+    $('#a-nome').value = ''; $('#a-img').value = ''; $('#a-img-nome').textContent = '';
+    if (r && r.id && arq) await enviaImgToken(r.id, arq);
+    return;
   }
   const li = t.closest('li[data-id]'); if (!li) return;
   const id = li.dataset.id, tk = E.est.tokens.find((x) => x.id === id);
   if (t.dataset.act === 'del') agir('tokenDel', { id });
+  else if (t.dataset.act === 'rmimg') agir('tokenImg', { id, dados: '' });
   else if (t.dataset.act === 'vis') agir('tokenEdit', { id, vis: tk.vis === false });
   else if (t.dataset.act === 'ir' && tk) { mapa.irPara(tk.x, tk.y); mapa.selecionar(id); E.sel = id; marcaSel(); if (innerWidth < 800) alternaPainel(false); }
 });
@@ -298,13 +358,17 @@ painel.addEventListener('submit', (e) => {
   if (e.target.id === 'f-dado') { const v = $('#i-dado').value.trim(); if (v) { agir('rolar', { expr: v }); $('#i-dado').value = ''; } }
 });
 painel.addEventListener('change', async (e) => {
-  const el = e.target, li = el.closest('li[data-id]');
+  const el = e.target, li = el.closest('li[data-id]'), lc = el.closest('li[data-cid]');
+  if (lc && el.classList.contains('cn')) return agir('cenaRenomear', { cenaId: lc.dataset.cid, nome: el.value });
+  if (el.id === 'a-img') { $('#a-img-nome').textContent = el.files[0] ? el.files[0].name.slice(0, 18) : ''; return; }
   if (li) {
     const id = li.dataset.id;
     if (el.classList.contains('n')) agir('tokenEdit', { id, nome: el.value });
     else if (el.classList.contains('c')) agir('tokenEdit', { id, cor: el.value });
     else if (el.classList.contains('tam')) agir('tokenEdit', { id, tam: +el.value });
     else if (el.classList.contains('dono')) agir('tokenEdit', { id, dono: el.value });
+    else if (el.classList.contains('visao')) agir('tokenEdit', { id, visao: +el.value });
+    else if (el.classList.contains('timg')) { const f = el.files[0]; el.value = ''; enviaImgToken(id, f); }
     return;
   }
   if (el.id === 'm-nome') { E.nome = el.value.trim() || E.nome; ls.set('ml.nome', E.nome); return agir('entrar', { pnome: E.nome }); }
@@ -315,6 +379,27 @@ painel.addEventListener('change', async (e) => {
   if (el.id === 'c-nevoa') return agir('cena', { nevoa: el.checked, grade: E.est.cena.grade });
 });
 painel.addEventListener('input', (e) => { if (e.target.id === 'c-size') $('#c-size-v').textContent = e.target.value; });
+
+/* ---------- imagem do token (recorte quadrado 256×256) ---------- */
+async function comprimirToken(file) {
+  const bmp = await createImageBitmap(file), lado = Math.min(bmp.width, bmp.height), cv = document.createElement('canvas');
+  cv.width = cv.height = 256; cv.getContext('2d').drawImage(bmp, (bmp.width - lado) / 2, (bmp.height - lado) / 2, lado, lado, 0, 0, 256, 256);
+  for (let q = 0.88; q > 0.3; q -= 0.2) {
+    let blob = await new Promise((r) => cv.toBlob(r, 'image/webp', q));
+    if (!blob || blob.type !== 'image/webp') blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', q));
+    if (blob && blob.size <= 280000) return blob;
+  }
+  throw new Error('Imagem difícil de comprimir');
+}
+async function enviaImgToken(id, file) {
+  if (!file) return;
+  try {
+    const blob = await comprimirToken(file);
+    const dados = await new Promise((res, rej) => { const f = new FileReader(); f.onload = () => res(String(f.result).split(',')[1]); f.onerror = rej; f.readAsDataURL(blob); });
+    await api('tokenImg', { id, dados, mime: blob.type });
+    poll(true);
+  } catch (e) { toast('Imagem do token: ' + e.message); }
+}
 
 /* ---------- upload da imagem do mapa ---------- */
 async function comprimir(file) {

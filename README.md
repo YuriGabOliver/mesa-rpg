@@ -5,7 +5,7 @@ O mestre cria a mesa, sobe um mapa e manda o link; os jogadores entram pelo celu
 
 Projeto **independente**. Usa **Supabase** (banco, imagens e tempo real) e **Vercel** (site e API).
 
-## O que tem na versão 0.2
+## O que tem na versão 0.3
 
 - Criar mesa (você vira o mestre) e convidar por link, sem login
 - Mapa: subir imagem (comprimida automaticamente), grade ajustável, zoom e pinça no celular
@@ -15,6 +15,9 @@ Projeto **independente**. Usa **Supabase** (banco, imagens e tempo real) e **Ver
 - Dados com histórico compartilhado (ex.: `2d6+3`), sorteados no servidor
 - **Tempo real** (Supabase Realtime): o que um move aparece para os outros em menos de 1 segundo
 - Cada jogador só mexe nos próprios tokens (até 3); o mestre mexe em tudo
+- **Cenas:** cada cena tem seu mapa, grade, tokens e névoa. Você abre e prepara qualquer cena; os jogadores só veem a cena em que você clicar em “Puxar jogadores”
+- **Imagem nos tokens:** envie uma imagem (recorte quadrado automático) ao criar o token ou depois, tocando na bolinha dele na lista
+- **Névoa melhorada:** revelar ou esconder com retângulo, círculo ou pincel; bordas suaves; desfazer; “Visão” por token (revela o entorno sozinho)
 
 ## Como funciona
 
@@ -27,6 +30,14 @@ Navegador ──(ações e leitura)──▶ Função do Vercel (api/) ──▶
 - O navegador **nunca** fala direto com as tabelas. Só a função do Vercel, com a chave secreta, lê e escreve. É ela que confere quem é mestre e quem pode mexer em qual token.
 - O Realtime só avisa "mudou"; o navegador então busca o estado novo. Se o Realtime falhar, o site continua funcionando por consulta periódica (alguns segundos de atraso).
 - Imagens dos mapas ficam no Supabase Storage (bucket público `mapas`, nomes aleatórios).
+
+## Atualizando da v0.2 para a v0.3
+
+1. **Primeiro o banco:** no Supabase, **SQL Editor → New query**, cole o conteúdo de `supabase/migracao-v3.sql` e clique em **Run**. Suas mesas atuais viram a “Cena 1”, sem perder nada.
+2. **Depois o código:** envie os arquivos novos para o repositório (mesmos nomes, substituindo). O Vercel publica sozinho.
+3. Não precisa mexer nas variáveis de ambiente.
+
+Começando do zero? Use só o `schema.sql` (ele já inclui tudo).
 
 ## Testar no seu computador (sem Vercel e sem Supabase)
 
@@ -45,7 +56,7 @@ Crie um repositório novo e envie todos os arquivos para a **raiz** (o `index.ht
 
 ### 2. Supabase
 1. Em supabase.com, **New project**. Escolha um nome, defina uma senha do banco (guarde) e, em região, *South America (São Paulo)*. Plano gratuito. Espere uns 2 minutos até o projeto ficar pronto.
-2. No menu da esquerda, abra **SQL Editor → New query**. Abra o arquivo `supabase/schema.sql` deste projeto, copie **tudo**, cole e clique em **Run**. Deve aparecer *Success*. Isso cria as tabelas, liga a segurança e cria o bucket `mapas`.
+2. No menu da esquerda, abra **SQL Editor → New query**. Abra o arquivo `supabase/schema.sql` deste projeto, copie **tudo**, cole e clique em **Run**. Deve aparecer *Success*. Isso cria as tabelas, liga a segurança, libera o acesso do servidor e cria o bucket `mapas`.
 3. Pegue as chaves em **Project Settings → API** (ou **API Keys**):
    - **Project URL** (algo como `https://abcdxyz.supabase.co`)
    - **Publishable key** (ou `anon`): é a chave pública
@@ -75,10 +86,12 @@ Crie um repositório novo e envie todos os arquivos para a **raiz** (o `index.ht
 | Sintoma | O que fazer |
 |---|---|
 | “Supabase não configurado” / “Banco de dados não configurado” | Falta alguma das 3 variáveis, ou falta o Redeploy depois de criá-las |
-| “Erro no banco de dados” | Rode o `schema.sql` (tabela não existe), ou o projeto gratuito foi **pausado** por ficar 7 dias sem uso: abra o painel do Supabase e clique em *Restore project* |
+| “Erro no banco de dados” (log do Vercel: `permission denied`, 403) | Rode o `schema.sql` de novo: ele inclui os `grant` para a chave secreta |
+| “Erro no banco de dados” (outros) | Rode o `schema.sql` (tabela não existe), ou o projeto gratuito foi **pausado** por ficar 7 dias sem uso: abra o painel do Supabase e clique em *Restore project* |
 | Mapa sobe mas não aparece | O bucket `mapas` não existe (rode o `schema.sql` de novo) ou `SUPABASE_URL` está errada |
 | Diz “consulta periódica” em vez de tempo real | Confira *Allow public access* no Realtime e se `SUPABASE_ANON_KEY` está preenchida. Funciona assim mesmo, só com atraso |
-| Jogador não vê um token | Tokens ocultos só aparecem para o mestre |
+| Jogador não vê um token | Tokens ocultos só aparecem para o mestre, e cada token pertence a uma cena |
+| “Mesa sem cena” ou erro depois de atualizar | Rode o `migracao-v3.sql` no Supabase |
 | Perdi o link do mestre | Só o link com `#k=...` dá controle em outro aparelho. No aparelho original ele fica salvo no navegador |
 
 ## Limites e cuidados
@@ -90,4 +103,4 @@ Crie um repositório novo e envie todos os arquivos para a **raiz** (o `index.ht
 
 ## Próximos passos possíveis
 
-Fichas por template (sacramento e gaia como sistemas), compêndio de regras, ping, desenho livre, áreas em cone e círculo, mover token ao vivo durante o arrasto.
+Música sincronizada, sistema de extensões, fichas por template (sacramento e gaia como sistemas), compêndio de regras, ping, desenho livre, mover token ao vivo durante o arrasto.

@@ -21,6 +21,20 @@ label.linha{display:flex;align-items:center;gap:8px;color:var(--ink);font-size:1
 .tag{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--line);color:var(--ink)}
 .tag.aviso{background:var(--bad);color:#fff}
 
+#t-cena{background:#2d4a63;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#tools-nevoa{position:absolute;left:50%;top:64px;transform:translateX(-50%);display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:center;padding:6px;background:rgba(20,17,14,.9);border:1px solid var(--line);border-radius:12px;max-width:96%}
+#tools-nevoa .sep{width:1px;height:24px;background:var(--line)}
+#tools-nevoa .raio{display:flex;align-items:center;gap:6px;margin:0;color:var(--ink);font-size:13px}
+#tools-nevoa .raio input{width:90px}
+#faixa{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center;padding:8px 12px;background:rgba(58,42,26,.96);border:1px solid var(--acc);border-radius:12px;max-width:94%;font-size:13px}
+.thumb{display:inline-flex;cursor:pointer;margin:0}
+.thumb img,.thumb .dot{width:34px;height:34px;border-radius:50%;object-fit:cover;border:2px solid #fff;display:block}
+#lista-cenas{list-style:none;margin:0 0 10px;padding:0}
+#lista-cenas li{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px;margin-bottom:6px;background:var(--card);border:1px solid var(--line);border-radius:9px}
+#lista-cenas li.vendo{border-color:#4d8fc4}
+#lista-cenas .cn{flex:1 1 120px;min-width:0}
+.tag.azul{background:#2d4a63}.tag.verde{background:#2f5a35}
+
 /* home */
 #home{overflow:auto;display:flex;justify-content:center;padding:20px 16px}
 .home-box{width:100%;max-width:440px}

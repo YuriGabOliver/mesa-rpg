@@ -10,9 +10,9 @@ const PORT = Number(process.env.PORT) || 3000;
 
 // ---------- Supabase falso, em memória (só o que o projeto usa: REST, Storage e Broadcast) ----------
 function supabaseFalso() {
-  const T = { mesas: [], tokens: [], jogadores: [], nevoa: [], rolagens: [] };
+  const T = { mesas: [], cenas: [], tokens: [], jogadores: [], nevoa: [], rolagens: [] };
   const ident = { nevoa: 0, rolagens: 0 }, arquivos = new Map(), ouvintes = new Map();
-  const PK = { mesas: ['id'], tokens: ['mesa', 'id'], jogadores: ['mesa', 'id'] };
+  const PK = { mesas: ['id'], cenas: ['mesa', 'id'], tokens: ['mesa', 'id'], jogadores: ['mesa', 'id'] };
   const RESERVADOS = ['select', 'order', 'limit', 'offset', 'on_conflict'];
   const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': '*' };
   const filtra = (rows, sp) => {
@@ -53,7 +53,12 @@ function supabaseFalso() {
         const tab = mm[1], sp = url.searchParams, prefer = req.headers.prefer || '';
         if (req.method === 'GET') {
           let rows = filtra(T[tab], sp);
-          const ord = sp.get('order'); if (ord) { const [c, d] = ord.split('.'); rows = [...rows].sort((a, b) => (a[c] - b[c]) * (d === 'desc' ? -1 : 1)); }
+          const ord = sp.get('order');
+          if (ord) {
+            const cmp = (x, y) => (typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? '')));
+            const regras = ord.split(',').map((o) => o.split('.'));
+            rows = [...rows].sort((a, b) => { for (const [c, d] of regras) { const r = cmp(a[c], b[c]) * (d === 'desc' ? -1 : 1); if (r) return r; } return 0; });
+          }
           const off = Number(sp.get('offset') || 0), lim = sp.get('limit') ? Number(sp.get('limit')) : undefined;
           rows = rows.slice(off, lim === undefined ? undefined : off + lim);
           const sel = sp.get('select');

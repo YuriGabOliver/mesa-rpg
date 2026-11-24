@@ -39,7 +39,7 @@
 
 <section id="mesa" class="tela" hidden>
   <header id="topo">
-    <b id="t-nome"></b><span id="t-papel" class="tag"></span><span id="t-off" class="tag aviso" hidden>sem conexão</span>
+    <b id="t-nome"></b><span id="t-papel" class="tag"></span><span id="t-cena" class="tag cena" hidden></span><span id="t-off" class="tag aviso" hidden>sem conexão</span>
     <span class="flex"></span>
     <button class="b" id="t-conv">Convidar</button>
     <button class="b" id="t-painel">Painel</button>
@@ -53,6 +53,14 @@
         <button class="b" data-f="nevoa" id="tool-nevoa" hidden title="Revelar área da névoa">Revelar</button>
         <button class="b" id="tool-centro" title="Centralizar o mapa">Centralizar</button>
       </div>
+      <div id="tools-nevoa" hidden>
+        <button class="b on" data-na="r">Revelar</button><button class="b" data-na="h">Esconder</button>
+        <span class="sep"></span>
+        <button class="b on" data-nm="rect">Retângulo</button><button class="b" data-nm="circ">Círculo</button><button class="b" data-nm="pincel">Pincel</button>
+        <label class="raio">Pincel <input type="range" id="n-raio" min="10" max="200" value="40"></label>
+        <button class="b" id="n-desfaz">Desfazer</button>
+      </div>
+      <div id="faixa" hidden><span id="faixa-txt"></span><button class="b prim mini" id="faixa-puxar">Puxar jogadores para cá</button></div>
     </div>
     <aside id="painel">
       <nav id="abas"></nav>
