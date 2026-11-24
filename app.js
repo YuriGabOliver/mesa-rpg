@@ -15,7 +15,7 @@ const SB_VERSOES = ['2.45.4', '2.39.7']; // supabase-js (UMD) no jsDelivr; tenta
 const CORES = ['#c0392b', '#2e86c1', '#27ae60', '#d4ac0d', '#8e44ad', '#e67e22', '#16a085', '#7f8c8d'];
 
 const E = { m: null, mk: '', pid: ls.get('ml.pid', null) || novoId(16), nome: ls.get('ml.nome', ''), v: 0, est: null, pend: 0,
-  vendo: '', polling: false, again: false, timer: null, falhas: 0, aba: 'dados', sel: null, adiaPainel: false, painel: innerWidth >= 800 };
+  vendo: '', polling: false, again: false, timer: null, falhas: 0, aba: 'dados', sel: null, adiaPainel: false, painel: innerWidth >= 800, menuTk: null, menuOrigin: null };
 ls.set('ml.pid', E.pid);
 window.__E = E; // depuração
 let mapa = null, CFG = null, clima = null;
@@ -156,12 +156,57 @@ function iniciaMapa() {
     urlToken,
     onSelecionar: (id) => { E.sel = id; marcaSel(); },
     onDuplo: () => { E.aba = 'tokens'; desenhaPainel(); if (!E.painel) alternaPainel(true); },
+    onTokenContext: (id, x, y) => abrirMenuToken(id, x, y),
   });
   window.__mapa = mapa; // útil para depuração no console
   clima = new Clima($('#cv-clima'), mapa); clima.ligar(ls.get('ml.clima', true)); window.__clima = clima;
 }
 
 /* ---------- sincronização (polling leve) ---------- */
+function abrirMenuToken(id, x, y, origem = null) {
+  const tk = E.est && E.est.tokens.find((t) => t.id === id);
+  if (!tk || (!souMestre() && tk.dono !== E.pid)) return;
+  E.menuTk = id; E.menuOrigin = origem;
+  $('#tm-titulo').textContent = tk.nome || 'Token';
+  const cenas = souMestre() ? (E.est.cenas || []).filter((c) => c.id !== E.est.vendo) : [];
+  $('#tm-cena').innerHTML = cenas.map((c) => '<option value="' + esc(c.id) + '">' + esc(c.nome) + '</option>').join('');
+  $('#tm-duplicar-wrap').hidden = !cenas.length;
+  const menu = $('#token-menu');
+  menu.hidden = false;
+  menu.style.left = Math.max(8, Math.min(Number(x) || 8, innerWidth - 340)) + 'px';
+  menu.style.top = Math.max(8, Math.min(Number(y) || 8, innerHeight - 300)) + 'px';
+  requestAnimationFrame(() => {
+    const margem = 8, maxX = Math.max(margem, innerWidth - menu.offsetWidth - margem);
+    const maxY = Math.max(margem, innerHeight - menu.offsetHeight - margem);
+    menu.style.left = Math.max(margem, Math.min(Number(x) || margem, maxX)) + 'px';
+    menu.style.top = Math.max(margem, Math.min(Number(y) || margem, maxY)) + 'px';
+  });
+  $('#tm-fechar').focus({ preventScroll: true });
+}
+function fechaMenuToken() {
+  const menu = $('#token-menu');
+  if (!menu || menu.hidden) return;
+  menu.hidden = true; E.menuTk = null;
+  const origem = E.menuOrigin; E.menuOrigin = null;
+  if (origem && origem.isConnected) origem.focus({ preventScroll: true });
+}
+$('#tm-fechar').addEventListener('click', fechaMenuToken);
+$('#tm-duplicar').addEventListener('click', () => {
+  const id = E.menuTk, cenaId = $('#tm-cena').value;
+  if (!id || !cenaId) return;
+  fechaMenuToken(); agir('tokenDuplicar', { id, cenaId });
+});
+$('#tm-guardar').addEventListener('click', () => {
+  const id = E.menuTk;
+  if (!id) return;
+  fechaMenuToken(); agir('tokenGuardar', { id });
+});
+document.addEventListener('pointerdown', (e) => {
+  const menu = $('#token-menu');
+  if (!menu.hidden && !menu.contains(e.target)) fechaMenuToken();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fechaMenuToken(); });
+
 async function poll(forcar = false) {
   if (!E.m) return;
   if (E.polling) { if (forcar) E.again = true; return; }
@@ -192,6 +237,7 @@ function aplica(j) {
   if (j.papel === 'mestre' && j.vendo !== E.vendo) { E.vendo = j.vendo; ls.set('ml.vendo.' + E.m, j.vendo); }
   if (!ant || ant.cena.img !== j.cena.img || antChave !== chave) mapa.setImagem(urlImagem(j.cena.img));
   mapa.setCena(j.cena); mapa.setTokens(j.tokens); mapa.setNevoa(j.nevoa); clima.define(j.cena.clima || null);
+  if (E.menuTk && !j.tokens.some((t) => t.id === E.menuTk)) fechaMenuToken();
   if (antChave && antChave !== chave) {
     E.sel = null; mapa.selecionar(null, false); mapa.centralizar();
     if (j.papel !== 'mestre') toast('O mestre levou a mesa para outra cena');
@@ -251,7 +297,8 @@ function desenhaPainel() {
         <label class="b mini" style="margin:0;display:inline-flex;align-items:center">Imagem<input type="file" id="a-img" accept="image/*" hidden></label><span id="a-img-nome" class="dica" style="margin:0"></span>
         ${souMestre() ? '<select id="a-dono"></select>' : ''}<button class="b prim" id="a-ok">Adicionar</button></div>
       <p class="dica">Aparece no centro da sua tela. Arraste para posicionar. Para trocar a imagem de um token, toque na bolinha dele na lista abaixo.</p>
-    </div><div class="sec"><h3>Tokens na mesa</h3><ul id="lista-tk"></ul></div>`;
+    </div><div class="sec"><h3>Tokens nesta cena</h3><ul id="lista-tk"></ul></div>
+    <div class="sec"><h3>Biblioteca de tokens</h3><p class="dica">Tokens guardados ficam disponíveis para outras cenas. Os ativos em outras cenas podem ser duplicados para esta.</p><ul id="lista-biblioteca"></ul></div>`;
   else if (E.aba === 'musica') c.innerHTML = musica.html(souMestre());
   else if (E.aba === 'cenas') c.innerHTML = `
     <div class="sec"><h3>Cenas</h3>
@@ -320,8 +367,19 @@ function atualizaPainel(forca) {
           <button class="b mini" data-act="vis" title="Mostrar/ocultar para jogadores">${t.vis === false ? 'Oculto' : 'Visível'}</button>` : `<small>${esc(nomeDono)}</small>`}
         <button class="b mini" data-act="ir" title="Ir até o token">Ir</button>
         ${meu && t.img ? '<button class="b mini" data-act="rmimg" title="Tirar a imagem">Sem img</button>' : ''}
-        ${meu ? '<button class="b mini" data-act="del" title="Excluir">✕</button>' : ''}</li>`;
-    }).join('') || '<li class="dica">Nenhum token ainda.</li>';
+        ${meu ? '<button class="b mini" data-act="menu" title="Ações do token">Ações</button>' : ''}</li>`;
+    }).join('') || '<li class="dica">Nenhum token nesta cena.</li>';
+    const cenaAtual = j.vendo || j.cenaId;
+    const nomeCena = (id) => (j.cenas || []).find((x) => x.id === id)?.nome || 'Outra cena';
+    $('#lista-biblioteca').innerHTML = (j.biblioteca || []).map((t) => {
+      const u = urlToken(t), mini = u ? '<img src="' + esc(u) + '" alt="">' : '<span class="dot" style="background:' + esc(t.cor) + '"></span>';
+      const status = t.cena == null ? 'Guardado' : t.cena === cenaAtual ? 'Nesta cena' : (souMestre() ? 'Cena: ' + nomeCena(t.cena) : 'Em outra cena');
+      const acao = t.cena == null
+        ? '<button class="b mini" data-act="colocar">Colocar aqui</button>'
+        : t.cena !== cenaAtual && souMestre()
+          ? '<button class="b mini" data-act="dup-cena">Duplicar aqui</button>' : '';
+      return '<li data-id="' + esc(t.id) + '"><span class="thumb">' + mini + '</span><span class="lib-nome">' + esc(t.nome) + '</span><small class="tag">' + esc(status) + '</small>' + acao + '</li>';
+    }).join('') || '<li class="dica">Biblioteca vazia.</li>';
   } else if (E.aba === 'cenas') {
     $('#lista-cenas').innerHTML = (j.cenas || []).map((x) => `<li data-cid="${esc(x.id)}" class="${x.id === j.vendo ? 'vendo' : ''}">
       <input class="cn" maxlength="30" value="${esc(x.nome)}">
@@ -393,7 +451,15 @@ painel.addEventListener('click', async (e) => {
     return;
   }
   const li = t.closest('li[data-id]'); if (!li) return;
-  const id = li.dataset.id, tk = E.est.tokens.find((x) => x.id === id);
+  const id = li.dataset.id, tk = E.est.tokens.find((x) => x.id === id) || (E.est.biblioteca || []).find((x) => x.id === id);
+  if (t.dataset.act === 'menu') {
+    const r = t.getBoundingClientRect(); return abrirMenuToken(id, r.right + 8, r.top, t);
+  }
+  if (t.dataset.act === 'colocar' && tk) {
+    const c = mapa.centro(), p = mapa.encaixa({ ...tk, x: c.x, y: c.y });
+    return agir('tokenColocar', { id, x: p.x, y: p.y });
+  }
+  if (t.dataset.act === 'dup-cena' && tk) return agir('tokenDuplicar', { id, cenaId: E.est.vendo });
   if (t.dataset.act === 'del') agir('tokenDel', { id });
   else if (t.dataset.act === 'rmimg') agir('tokenImg', { id, dados: '' });
   else if (t.dataset.act === 'vis') agir('tokenEdit', { id, vis: tk.vis === false });

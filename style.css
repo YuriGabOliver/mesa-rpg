@@ -22,6 +22,16 @@ label.linha{display:flex;align-items:center;gap:8px;color:var(--ink);font-size:1
 .tag.aviso{background:var(--bad);color:#fff}
 
 #t-cena{background:#2d4a63;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#token-menu{position:fixed;z-index:30;width:min(320px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow:auto;padding:12px;background:var(--bar);border:1px solid var(--acc);border-radius:12px;box-shadow:0 10px 32px #000b}
+#token-menu .tm-topo{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+#token-menu label{margin:8px 0 4px}
+#token-menu select,#token-menu>button,#tm-duplicar-wrap>button{width:100%;min-height:44px;margin-top:6px}
+#lista-biblioteca{list-style:none;margin:0;padding:0}
+#lista-biblioteca li{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;margin-bottom:6px;background:var(--card);border:1px solid var(--line);border-radius:9px}
+#lista-biblioteca .lib-nome{flex:1 1 90px;min-width:0;font-weight:600;overflow-wrap:anywhere}
+#lista-biblioteca .tag{white-space:nowrap}
+#lista-biblioteca button{min-height:44px}
+#lista-tk button[data-act="menu"]{min-height:44px}
 #tools-nevoa{position:absolute;left:50%;top:64px;transform:translateX(-50%);display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:center;padding:6px;background:rgba(20,17,14,.9);border:1px solid var(--line);border-radius:12px;max-width:96%}
 #tools-nevoa .sep{width:1px;height:24px;background:var(--line)}
 #tools-nevoa .raio{display:flex;align-items:center;gap:6px;margin:0;color:var(--ink);font-size:13px}

@@ -28,6 +28,14 @@ async function limita(tabela, filtro, max) {
   if (x) await rest('DELETE', `${tabela}?${filtro}&id=lte.${x.id}`);
 }
 
+async function apagaImagemTokenSeOrfa(m, img) {
+  if (!img) return;
+  try {
+    const tokens = await rest('GET', `tokens?mesa=eq.${m}&select=dados`);
+    if (!tokens.some((x) => x.dados && x.dados.img === img)) await apagarImagem(`${m}/${img}`);
+  } catch { /* preservar a imagem se nao for possivel confirmar que ficou sem uso */ }
+}
+
 async function contexto(b) {
   const m = txt(b.m, 16).toLowerCase();
   if (!idOk(m, 4, 16)) throw new Http(400, 'Código de mesa inválido');
@@ -63,12 +71,13 @@ async function estado(req, res) {
   // "agora" = hora do servidor: os clientes usam para acertar o relógio e tocar a música no mesmo ponto
   if (cli && Number(vr.v) === cli) return res.status(200).json({ v: cli, mesmo: true, agora: Date.now() });
   const c = await contexto({ m, mk: req.headers['x-mk'], pid: req.headers['x-pid'], c: q.c });
-  const [tk, nv, lg, jg, cs] = await Promise.all([
+  const [tk, nv, lg, jg, cs, todosTokens] = await Promise.all([
     rest('GET', `tokens?mesa=eq.${m}&cena=eq.${c.alvo}&select=dados`),
     rest('GET', `nevoa?mesa=eq.${m}&cena=eq.${c.alvo}&select=rect&order=id.asc`),
     rest('GET', `rolagens?mesa=eq.${m}&select=dados&order=id.desc&limit=${MAX_LOG}`),
     rest('GET', `jogadores?mesa=eq.${m}&select=id,dados`),
     c.mestre ? rest('GET', `cenas?mesa=eq.${m}&select=id,nome,ordem&order=ordem.asc,id.asc`) : Promise.resolve(null),
+    c.mestre ? rest('GET', `tokens?mesa=eq.${m}&select=cena,dados`) : rest('GET', `tokens?mesa=eq.${m}&dados->>dono=eq.${c.pid}&select=cena,dados`),
   ]);
   let tokens = tk.map((x) => x.dados);
   if (!c.mestre) tokens = tokens.filter((t) => t.vis !== false || t.dono === c.pid);
@@ -77,8 +86,14 @@ async function estado(req, res) {
     nome: c.row.nome, papel: c.mestre ? 'mestre' : 'jogador', cena: c.cena, tokens,
     nevoa: nv.map((x) => x.rect), log: lg.map((x) => x.dados).reverse(), jog: jg.map((x) => ({ id: x.id, ...x.dados })),
   };
-  if (c.mestre) { out.cenas = cs.map((x) => ({ id: x.id, nome: x.nome })); out.ativa = c.ativa; out.vendo = c.alvo; out.cenaNome = c.cenaNome; }
-  else out.cenaId = c.ativa; // jogadores só sabem que existe "a cena atual"
+  if (c.mestre) {
+    out.cenas = cs.map((x) => ({ id: x.id, nome: x.nome }));
+    out.ativa = c.ativa; out.vendo = c.alvo; out.cenaNome = c.cenaNome;
+    out.biblioteca = todosTokens.map((x) => ({ ...x.dados, cena: x.cena }));
+  } else {
+    out.cenaId = c.ativa;
+    out.biblioteca = todosTokens.map((x) => ({ ...x.dados, cena: x.cena }));
+  } // jogadores só sabem que existe "a cena atual"
   return res.status(200).json(out);
 }
 
@@ -223,6 +238,45 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, id: t.id });
     }
 
+    if (['tokenGuardar', 'tokenColocar', 'tokenDuplicar'].includes(acao)) {
+      const id = txt(b.id, 12).toLowerCase();
+      if (!idOk(id, 1, 12)) throw new Http(404, 'Token não encontrado');
+      const [row] = await rest('GET', `tokens?mesa=eq.${m}&id=eq.${id}&select=cena,dados`);
+      if (!row) throw new Http(404, 'Token não encontrado');
+      const t = row.dados;
+
+      if (acao === 'tokenGuardar') {
+        if (row.cena === null) return res.status(200).json({ ok: true });
+        if (!c.mestre && (t.dono !== c.pid || row.cena !== c.ativa)) throw new Http(403, 'Esse token não é seu');
+        if (c.mestre && row.cena !== c.alvo) throw new Http(400, 'Abra a cena do token antes de removê-lo');
+        await rest('PATCH', `tokens?mesa=eq.${m}&id=eq.${id}`, { corpo: { cena: null }, prefer: 'return=minimal' });
+        await bump(m);
+        return res.status(200).json({ ok: true });
+      }
+
+      if (acao === 'tokenColocar') {
+        if (!c.mestre && t.dono !== c.pid) throw new Http(403, 'Esse token não é seu');
+        if (row.cena !== null) throw new Http(400, 'Esse token já está em uma cena');
+        const n = validaToken({ x: b.x, y: b.y }, cena, t);
+        await rest('PATCH', `tokens?mesa=eq.${m}&id=eq.${id}`, { corpo: { cena: c.alvo, dados: n }, prefer: 'return=minimal' });
+        await bump(m);
+        return res.status(200).json({ ok: true, id });
+      }
+
+      exigeMestre(c);
+      if (row.cena === null) throw new Http(400, 'Esse token está guardado; use Colocar nesta cena');
+      const cenaId = String(b.cenaId || '');
+      if (!idOk(cenaId, 2, 8) || cenaId === row.cena) throw new Http(400, 'Escolha outra cena');
+      const [destino] = await rest('GET', `cenas?mesa=eq.${m}&id=eq.${cenaId}&select=id,cena`);
+      if (!destino) throw new Http(404, 'Cena não encontrada');
+      const novoId = rid(6), copia = { ...t, id: novoId };
+      copia.x = num(t.x, 0, destino.cena.w, destino.cena.w / 2);
+      copia.y = num(t.y, 0, destino.cena.h, destino.cena.h / 2);
+      await rest('POST', 'tokens', { corpo: { mesa: m, id: novoId, cena: cenaId, dados: copia }, prefer: 'return=minimal' });
+      await bump(m);
+      return res.status(200).json({ ok: true, id: novoId });
+    }
+
     if (['tokenMove', 'tokenEdit', 'tokenDel', 'tokenImg'].includes(acao)) {
       const id = txt(b.id, 12).toLowerCase();
       if (!idOk(id, 1, 12)) throw new Http(404, 'Token não encontrado');
@@ -235,7 +289,7 @@ export default async function handler(req, res) {
       if (acao === 'tokenDel') {
         await rest('DELETE', `tokens?mesa=eq.${m}&id=eq.${id}`);
         await bump(m);
-        if (t.img) await apagarImagem(`${m}/${t.img}`);
+        await apagaImagemTokenSeOrfa(m, t.img);
         return res.status(200).json({ ok: true });
       }
       if (acao === 'tokenImg') {
@@ -244,7 +298,7 @@ export default async function handler(req, res) {
         n.img = novo;
         await rest('PATCH', `tokens?mesa=eq.${m}&id=eq.${id}`, { corpo: { dados: n }, prefer: 'return=minimal' });
         await bump(m);
-        if (t.img) await apagarImagem(`${m}/${t.img}`);
+        await apagaImagemTokenSeOrfa(m, t.img);
         return res.status(200).json({ ok: true });
       }
       const n = acao === 'tokenMove' ? validaToken({ x: b.x, y: b.y }, cenaTk, t) : validaToken(b, cenaTk, t);
@@ -352,7 +406,7 @@ export default async function handler(req, res) {
       await rest('DELETE', `cenas?mesa=eq.${m}&id=eq.${id}`);
       await bump(m);
       if (alvo.cena.img) await apagarImagem(`${m}/${alvo.cena.img}`);
-      for (const t of tks) if (t.dados.img) await apagarImagem(`${m}/${t.dados.img}`);
+      for (const img of new Set(tks.map((t) => t.dados.img).filter(Boolean))) await apagaImagemTokenSeOrfa(m, img);
       return res.status(200).json({ ok: true });
     }
 

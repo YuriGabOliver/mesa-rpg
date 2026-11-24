@@ -7,6 +7,7 @@ Projeto **independente**. Usa **Supabase** (banco, imagens e tempo real) e **Ver
 
 ## O que tem na versão 0.5
 
+- **Biblioteca de tokens:** remova um token do mapa para guardá-lo sem excluir. Coloque-o de volta na cena atual ou duplique-o para outra cena. No computador, clique com o botão direito no token; no celular, use **Ações** na lista de tokens.
 - **Clima por cena** (aba **Mapa → Clima**): Chuva, Tempestade, Neve, Neblina e Cinzas e brasas, com **Direção** e força do **Vento** e **Intensidade**. Aparece para todos e vale só para a cena em que você configurou. Não precisa de migração do banco (fica dentro da própria cena).
 - Leve: roda a ~30 quadros/s, só enquanto houver clima, para quando a aba fica escondida e cada pessoa pode desligar os efeitos no próprio aparelho (aba **Mesa → Neste aparelho**). Respeita "reduzir movimento" do sistema. O clima não passa pela rede: cada navegador simula as próprias gotas.
 - A tempestade tem um clarão suave de relâmpago de vez em quando (sem pisca-pisca; desligado com "reduzir movimento").

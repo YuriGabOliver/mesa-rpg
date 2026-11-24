@@ -81,7 +81,14 @@ export class Mapa {
   eventos() {
     const c = this.c;
     c.addEventListener('wheel', (e) => { e.preventDefault(); this.zoomEm(e.offsetX, e.offsetY, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+    c.addEventListener('contextmenu', (e) => {
+      const t = this.hit(this.mundo(e.offsetX, e.offsetY));
+      if (!t) return;
+      e.preventDefault();
+      if (this.cb.onTokenContext) this.cb.onTokenContext(t.id, e.clientX, e.clientY);
+    });
     c.addEventListener('pointerdown', (e) => {
+      if (e.button === 2) return;
       c.setPointerCapture(e.pointerId); this.ptrs.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
       if (this.ptrs.size === 2) { this.cancelaAcao(); this.acao = { tipo: 'pinca', ...this.medePinca() }; return; }
       if (this.ptrs.size > 2) return;
