@@ -5,6 +5,13 @@ O mestre cria a mesa, sobe um mapa e manda o link; os jogadores entram pelo celu
 
 Projeto **independente**. Usa **Supabase** (banco, imagens e tempo real) e **Vercel** (site e API).
 
+## O que tem na versão 0.5
+
+- **Clima por cena** (aba **Mapa → Clima**): Chuva, Tempestade, Neve, Neblina e Cinzas e brasas, com **Direção** e força do **Vento** e **Intensidade**. Aparece para todos e vale só para a cena em que você configurou. Não precisa de migração do banco (fica dentro da própria cena).
+- Leve: roda a ~30 quadros/s, só enquanto houver clima, para quando a aba fica escondida e cada pessoa pode desligar os efeitos no próprio aparelho (aba **Mesa → Neste aparelho**). Respeita "reduzir movimento" do sistema. O clima não passa pela rede: cada navegador simula as próprias gotas.
+- A tempestade tem um clarão suave de relâmpago de vez em quando (sem pisca-pisca; desligado com "reduzir movimento").
+- O clima é desenhado **por cima** do mapa e da névoa.
+
 ## O que tem na versão 0.4
 
 - **Música sincronizada** (aba **Música**): o mestre monta uma biblioteca de links de áudio (Dropbox ou outro link público e direto), com título e tags, busca, importar e exportar CSV (mesmo formato do Tracks do Owlbear). Toca, pausa, retoma e para para todos. Todo mundo ouve o mesmo ponto da faixa, em loop, e quem entra depois já cai no ponto certo. Volume e mudo são de cada pessoa. Nada de áudio passa pela mesa: ela só guarda o link e a hora do servidor, então pesa quase nada.
@@ -113,4 +120,4 @@ Crie um repositório novo e envie todos os arquivos para a **raiz** (o `index.ht
 
 ## Próximos passos possíveis
 
-Clima (chuva, neblina, etc.), sistema de extensões, fichas por template (sacramento e gaia como sistemas), compêndio de regras, ping, desenho livre, mover token ao vivo durante o arrasto.
+Névoa dinâmica (paredes, portas e luzes), sistema de extensões, fichas por template (sacramento e gaia como sistemas), compêndio de regras, ping, desenho livre, mover token ao vivo durante o arrasto.

@@ -1,5 +1,6 @@
 import { Mapa } from './mapa.js';
 import { criaMusica } from './musica.js';
+import { Clima, TIPOS as TIPOS_CLIMA } from './clima.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -17,7 +18,7 @@ const E = { m: null, mk: '', pid: ls.get('ml.pid', null) || novoId(16), nome: ls
   vendo: '', polling: false, again: false, timer: null, falhas: 0, aba: 'dados', sel: null, adiaPainel: false, painel: innerWidth >= 800 };
 ls.set('ml.pid', E.pid);
 window.__E = E; // depuração
-let mapa = null, CFG = null;
+let mapa = null, CFG = null, clima = null;
 async function carregaConfig() {
   if (CFG) return CFG;
   const r = await fetch('/api/config'); const j = await r.json().catch(() => ({}));
@@ -131,7 +132,7 @@ async function abreMesa(m, mk) {
   $('#home').hidden = true; $('#mesa').hidden = false;
   history.replaceState(null, '', `/?m=${m}`);
   if (!mapa) iniciaMapa();
-  mapa.setImagem(null); mapa.setTokens([]); mapa.setNevoa([]); musica.estado(null);
+  mapa.setImagem(null); mapa.setTokens([]); mapa.setNevoa([]); musica.estado(null); clima.define(null);
   $('#painel').classList.toggle('fechado', !E.painel);
   try {
     await carregaConfig();
@@ -143,7 +144,7 @@ async function abreMesa(m, mk) {
   } catch (e) { sair(e.message); }
 }
 function sair(msg) {
-  clearTimeout(E.timer); fechaRealtime(); E.m = null; E.est = null; musica.estado(null); musica.fecha();
+  clearTimeout(E.timer); fechaRealtime(); E.m = null; E.est = null; musica.estado(null); musica.fecha(); if (clima) clima.define(null);
   mostraHome(msg);
 }
 
@@ -157,6 +158,7 @@ function iniciaMapa() {
     onDuplo: () => { E.aba = 'tokens'; desenhaPainel(); if (!E.painel) alternaPainel(true); },
   });
   window.__mapa = mapa; // útil para depuração no console
+  clima = new Clima($('#cv-clima'), mapa); clima.ligar(ls.get('ml.clima', true)); window.__clima = clima;
 }
 
 /* ---------- sincronização (polling leve) ---------- */
@@ -189,7 +191,7 @@ function aplica(j) {
   mapa.setMestre(j.papel === 'mestre');
   if (j.papel === 'mestre' && j.vendo !== E.vendo) { E.vendo = j.vendo; ls.set('ml.vendo.' + E.m, j.vendo); }
   if (!ant || ant.cena.img !== j.cena.img || antChave !== chave) mapa.setImagem(urlImagem(j.cena.img));
-  mapa.setCena(j.cena); mapa.setTokens(j.tokens); mapa.setNevoa(j.nevoa);
+  mapa.setCena(j.cena); mapa.setTokens(j.tokens); mapa.setNevoa(j.nevoa); clima.define(j.cena.clima || null);
   if (antChave && antChave !== chave) {
     E.sel = null; mapa.selecionar(null, false); mapa.centralizar();
     if (j.papel !== 'mestre') toast('O mestre levou a mesa para outra cena');
@@ -266,6 +268,14 @@ function desenhaPainel() {
       <label class="linha"><input type="checkbox" id="c-snap"> Encaixar tokens na casa</label>
       <label>Tamanho da casa: <b id="c-size-v"></b> px<input type="range" id="c-size" min="20" max="200"></label>
       <label>Metros por casa<input type="number" id="c-m" min="0.1" step="0.1"></label></div>
+    <div class="sec"><h3>Clima</h3>
+      <label>Condição<select id="cl-tipo">${TIPOS_CLIMA.map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}</select></label>
+      <div id="cl-extra" hidden>
+        <label>Direção do vento: <b id="cl-dir-v"></b><input type="range" id="cl-dir" min="0" max="359" value="0"></label>
+        <label>Vento: <b id="cl-vento-v"></b><input type="range" id="cl-vento" min="0" max="100" value="20"></label>
+        <label>Intensidade: <b id="cl-cob-v"></b><input type="range" id="cl-cob" min="1" max="100" value="50"></label>
+      </div>
+      <p class="dica">Vale para esta cena e aparece para todos. Cada pessoa pode desligar os efeitos no próprio aparelho (aba Mesa).</p></div>
     <div class="sec"><h3>Névoa de guerra</h3>
       <label class="linha"><input type="checkbox" id="c-nevoa"> Névoa ativa</label>
       <div class="f-add" style="margin-top:8px"><button class="b" id="b-cobrir">Cobrir tudo de novo</button><button class="b" id="b-desfaz">Desfazer última</button></div>
@@ -278,6 +288,9 @@ function desenhaPainel() {
       ${souMestre() ? `<h3 style="margin-top:14px">Link do mestre</h3>
       <div class="copia"><input readonly id="m-lm" value="${esc(linkMestre())}"><button class="b" data-cp="m">Copiar</button></div>
       <div class="aviso-box">Guarde este link: ele dá controle total da mesa e é a única forma de voltar como mestre em outro aparelho. Não envie para jogadores.</div>` : ''}
+    </div><div class="sec"><h3>Neste aparelho</h3>
+      <label class="linha"><input type="checkbox" id="m-clima"> Mostrar efeitos de clima</label>
+      <p class="dica">Desligue se a mesa ficar pesada no seu celular. Só afeta você.</p>
     </div><div class="sec"><h3>Na mesa agora</h3><ul id="jogs"></ul><p class="dica" id="m-sync"></p></div>
     <button class="b" id="m-sair">Sair da mesa</button>`;
   atualizaPainel(true);
@@ -320,12 +333,22 @@ function atualizaPainel(forca) {
     $('#c-grade').checked = g.on; $('#c-snap').checked = g.snap; $('#c-size').value = g.size; $('#c-size-v').textContent = g.size;
     if (document.activeElement !== $('#c-m')) $('#c-m').value = g.m;
     $('#c-nevoa').checked = j.cena.nevoa;
+    const cl = j.cena.clima || {}, def = (id, v) => { const e = $(id); if (e && document.activeElement !== e) e.value = v; };
+    def('#cl-tipo', cl.tipo || 'nenhum'); def('#cl-dir', cl.dir ?? 0); def('#cl-vento', cl.vento ?? 20); def('#cl-cob', cl.cob ?? 50); climaForm();
   } else if (E.aba === 'musica') {
     musica.atualiza(souMestre());
   } else if (E.aba === 'mesa') {
-    atualizaSync();
+    atualizaSync(); $('#m-clima').checked = !!ls.get('ml.clima', true);
     $('#jogs').innerHTML = j.jog.map((x) => `<li>${esc(x.nome)} ${x.mestre ? '<span class="tag">Mestre</span>' : ''} ${x.id === E.pid ? '<small>(você)</small>' : ''}</li>`).join('');
   }
+}
+// lê os controles de clima, atualiza os rótulos e devolve { tipo, dir, vento, cob } (ou null = sem clima)
+function climaForm() {
+  const tipo = $('#cl-tipo').value, dir = +$('#cl-dir').value, setas = ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗'];
+  $('#cl-extra').hidden = tipo === 'nenhum';
+  $('#cl-dir-v').textContent = `${setas[Math.round(dir / 45) % 8]} ${dir}°`;
+  $('#cl-vento-v').textContent = $('#cl-vento').value; $('#cl-cob-v').textContent = $('#cl-cob').value;
+  return tipo === 'nenhum' ? null : { tipo, dir, vento: +$('#cl-vento').value, cob: +$('#cl-cob').value };
 }
 function detalhe(d) {
   return (d || []).map((p, i) => {
@@ -396,12 +419,17 @@ painel.addEventListener('change', async (e) => {
   }
   if (el.id === 'm-nome') { E.nome = el.value.trim() || E.nome; ls.set('ml.nome', E.nome); return agir('entrar', { pnome: E.nome }); }
   if (el.id === 'f-img') return sobeImagem(el.files[0]);
+  if (el.id === 'm-clima') { ls.set('ml.clima', el.checked); return clima.ligar(el.checked); }
+  if (el.id && el.id.startsWith('cl-')) return agir('cena', { clima: climaForm() });
   if (['c-grade', 'c-snap', 'c-size', 'c-m'].includes(el.id)) {
     return agir('cena', { grade: { on: $('#c-grade').checked, snap: $('#c-snap').checked, size: +$('#c-size').value, m: +$('#c-m').value || 1.5 } });
   }
   if (el.id === 'c-nevoa') return agir('cena', { nevoa: el.checked, grade: E.est.cena.grade });
 });
-painel.addEventListener('input', (e) => { if (e.target.id === 'c-size') $('#c-size-v').textContent = e.target.value; });
+painel.addEventListener('input', (e) => {
+  if (e.target.id === 'c-size') $('#c-size-v').textContent = e.target.value;
+  if (e.target.id && e.target.id.startsWith('cl-')) clima.define(climaForm()); // prévia na hora; só envia ao soltar (evento change)
+});
 
 /* ---------- imagem do token (recorte quadrado 256×256) ---------- */
 async function comprimirToken(file) {

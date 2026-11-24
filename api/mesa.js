@@ -93,6 +93,13 @@ function validaToken(b, cena, ant = {}) {
   return t;
 }
 
+// clima da cena (fica dentro de cenas.cena, sem coluna nova): { tipo, dir: graus do vento (0 = →, 90 = ↓), vento 0-100, cob: intensidade 1-100 }
+const TIPOS_CLIMA = ['chuva', 'tempestade', 'neve', 'neblina', 'cinzas'];
+function validaClima(c) {
+  if (!c || typeof c !== 'object' || !TIPOS_CLIMA.includes(c.tipo)) return null;
+  return { tipo: c.tipo, dir: Math.round(num(c.dir, 0, 359, 0)), vento: Math.round(num(c.vento, 0, 100, 0)), cob: Math.round(num(c.cob, 1, 100, 50)) };
+}
+
 // uma operação da névoa: { t: 'r' revelar | 'h' esconder, k: 'rect' | 'circ' | 'path', ... }
 function validaOp(o, cena) {
   if (Array.isArray(o)) o = { t: 'r', k: 'rect', x: o[0], y: o[1], w: o[2], h: o[3] }; // formato antigo
@@ -261,6 +268,7 @@ export default async function handler(req, res) {
         m: num(g.m, 0.1, 1000, cena.grade.m),
       };
       if (b.nevoa !== undefined) nova.nevoa = !!b.nevoa;
+      if (b.clima !== undefined) { const cl = validaClima(b.clima); if (cl) nova.clima = cl; else delete nova.clima; } // null = sem clima
       await rest('PATCH', `cenas?mesa=eq.${m}&id=eq.${c.alvo}`, { corpo: { cena: nova }, prefer: 'return=minimal' });
       await bump(m);
       return res.status(200).json({ ok: true });

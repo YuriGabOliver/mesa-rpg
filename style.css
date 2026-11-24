@@ -110,3 +110,8 @@ label.linha{display:flex;align-items:center;gap:8px;color:var(--ink);font-size:1
 .mu-tit b,.mu-tit small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mu-tit small{color:var(--mut)}
 #mu-form{display:grid;gap:6px;margin:8px 0}
+
+/* clima */
+#cv-clima{position:absolute;left:0;top:0;pointer-events:none;display:block}
+#cl-tipo{width:100%;margin-top:4px}
+#cl-extra label b{color:var(--ink);margin-left:4px}
