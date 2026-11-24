@@ -1,6 +1,6 @@
 {
   "name": "mesa-leve",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Mesa virtual leve para RPG: mapa com tokens, névoa, régua e dados.",

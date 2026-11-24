@@ -1,4 +1,5 @@
 import { Mapa } from './mapa.js';
+import { criaMusica } from './musica.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -67,6 +68,17 @@ const agir = (acao, dados) => { E.ultMud = Date.now(); return api(acao, dados).t
 const souMestre = () => E.est && E.est.papel === 'mestre';
 const linkJogador = () => `${location.origin}/?m=${E.m}`;
 const linkMestre = () => `${location.origin}/?m=${E.m}#k=${E.mk}`;
+
+/* ---------- música sincronizada (musica.js) ---------- */
+const musica = criaMusica({ toast, agir: (a, d) => agir(a, d), souMestre: () => souMestre(), onMudou: () => { atualizaSom(); if (E.aba === 'musica' && E.est) musica.atualiza(souMestre()); } });
+function atualizaSom() {
+  const b = $('#t-som'), s = musica.resumo();
+  if (!b) return;
+  b.hidden = !s.ativa;
+  b.textContent = s.bloqueado ? '🔇 Ativar som' : s.mudo ? '🔇' : s.tocando ? '🎵' : '⏸';
+  b.title = s.bloqueado ? 'O navegador bloqueou o som: toque para ativar' : 'Abrir a música da mesa';
+}
+$('#t-som').onclick = () => { if (musica.resumo().bloqueado) return musica.desbloquear(); E.aba = 'musica'; desenhaPainel(); alternaPainel(true); };
 function recentes(atualiza) {
   let l = ls.get('ml.mesas', []);
   if (atualiza) { l = l.filter((x) => x.m !== atualiza.m); l.unshift({ ...atualiza, t: Date.now() }); l = l.slice(0, 8); ls.set('ml.mesas', l); }
@@ -119,7 +131,7 @@ async function abreMesa(m, mk) {
   $('#home').hidden = true; $('#mesa').hidden = false;
   history.replaceState(null, '', `/?m=${m}`);
   if (!mapa) iniciaMapa();
-  mapa.setImagem(null); mapa.setTokens([]); mapa.setNevoa([]);
+  mapa.setImagem(null); mapa.setTokens([]); mapa.setNevoa([]); musica.estado(null);
   $('#painel').classList.toggle('fechado', !E.painel);
   try {
     await carregaConfig();
@@ -131,7 +143,7 @@ async function abreMesa(m, mk) {
   } catch (e) { sair(e.message); }
 }
 function sair(msg) {
-  clearTimeout(E.timer); fechaRealtime(); E.m = null; E.est = null;
+  clearTimeout(E.timer); fechaRealtime(); E.m = null; E.est = null; musica.estado(null); musica.fecha();
   mostraHome(msg);
 }
 
@@ -153,8 +165,10 @@ async function poll(forcar = false) {
   if (E.polling) { if (forcar) E.again = true; return; }
   E.polling = true;
   try {
+    const t0 = Date.now();
     const r = await fetch(`/api/mesa?m=${E.m}&v=${forcar ? 0 : E.v}&c=${encodeURIComponent(E.vendo || '')}`, { headers: { 'x-mk': E.mk || '', 'x-pid': E.pid }, cache: 'no-store' });
     const j = await r.json().catch(() => ({}));
+    if (r.ok && j.agora) musica.relogio(j.agora, t0, Date.now()); // acerta o relógio com o servidor (música no mesmo ponto)
     if (!r.ok) { if (r.status === 404) { sair('Mesa não encontrada. Confira o link.'); return; } throw new Error(j.erro || r.status); }
     E.falhas = 0; $('#t-off').hidden = true;
     if (!j.mesmo && !(E.pend > 0 || mapa.arrastando)) aplica(j);
@@ -171,6 +185,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && E.
 function aplica(j) {
   const ant = E.est; E.est = j; E.v = j.v; E.ultMud = Date.now();
   const chave = j.vendo || j.cenaId, antChave = ant && (ant.vendo || ant.cenaId);
+  musica.estado(j.musica || null);
   mapa.setMestre(j.papel === 'mestre');
   if (j.papel === 'mestre' && j.vendo !== E.vendo) { E.vendo = j.vendo; ls.set('ml.vendo.' + E.m, j.vendo); }
   if (!ant || ant.cena.img !== j.cena.img || antChave !== chave) mapa.setImagem(urlImagem(j.cena.img));
@@ -216,9 +231,10 @@ $('#t-painel').onclick = () => alternaPainel();
 $('#t-conv').onclick = () => { E.aba = 'mesa'; desenhaPainel(); alternaPainel(true); };
 
 /* ---------- painel ---------- */
-function abas() { return [['dados', 'Dados'], ['tokens', 'Tokens'], ...(souMestre() ? [['cenas', 'Cenas'], ['mapa', 'Mapa']] : []), ['mesa', 'Mesa']]; }
+function abas() { return [['dados', 'Dados'], ['tokens', 'Tokens'], ['musica', 'Música'], ...(souMestre() ? [['cenas', 'Cenas'], ['mapa', 'Mapa']] : []), ['mesa', 'Mesa']]; }
 function desenhaPainel() {
   if (!abas().some((a) => a[0] === E.aba)) E.aba = 'dados';
+  musica.fecha();
   $('#abas').innerHTML = abas().map(([k, n]) => `<button data-a="${k}" class="${k === E.aba ? 'on' : ''}">${n}</button>`).join('');
   const c = $('#conteudo');
   if (E.aba === 'dados') c.innerHTML = `
@@ -234,6 +250,7 @@ function desenhaPainel() {
         ${souMestre() ? '<select id="a-dono"></select>' : ''}<button class="b prim" id="a-ok">Adicionar</button></div>
       <p class="dica">Aparece no centro da sua tela. Arraste para posicionar. Para trocar a imagem de um token, toque na bolinha dele na lista abaixo.</p>
     </div><div class="sec"><h3>Tokens na mesa</h3><ul id="lista-tk"></ul></div>`;
+  else if (E.aba === 'musica') c.innerHTML = musica.html(souMestre());
   else if (E.aba === 'cenas') c.innerHTML = `
     <div class="sec"><h3>Cenas</h3>
       <p class="dica">Os jogadores só veem a cena em que você os colocar com “Puxar jogadores”. Você pode abrir e preparar outras cenas sem que eles saibam.</p>
@@ -264,6 +281,7 @@ function desenhaPainel() {
     </div><div class="sec"><h3>Na mesa agora</h3><ul id="jogs"></ul><p class="dica" id="m-sync"></p></div>
     <button class="b" id="m-sair">Sair da mesa</button>`;
   atualizaPainel(true);
+  if (E.aba === 'musica') musica.abre(souMestre());
 }
 function podeEditar() { const f = document.activeElement; return !(f && f.closest && f.closest('#lista-tk') && /INPUT|SELECT/.test(f.tagName)); }
 function atualizaPainel(forca) {
@@ -302,6 +320,8 @@ function atualizaPainel(forca) {
     $('#c-grade').checked = g.on; $('#c-snap').checked = g.snap; $('#c-size').value = g.size; $('#c-size-v').textContent = g.size;
     if (document.activeElement !== $('#c-m')) $('#c-m').value = g.m;
     $('#c-nevoa').checked = j.cena.nevoa;
+  } else if (E.aba === 'musica') {
+    musica.atualiza(souMestre());
   } else if (E.aba === 'mesa') {
     atualizaSync();
     $('#jogs').innerHTML = j.jog.map((x) => `<li>${esc(x.nome)} ${x.mestre ? '<span class="tag">Mestre</span>' : ''} ${x.id === E.pid ? '<small>(você)</small>' : ''}</li>`).join('');
@@ -319,6 +339,9 @@ $('#conteudo').addEventListener('focusout', () => setTimeout(() => { if (E.adiaP
 /* eventos do painel (delegação) */
 $('#abas').addEventListener('click', (e) => { const b = e.target.closest('button[data-a]'); if (b) { E.aba = b.dataset.a; desenhaPainel(); } });
 const painel = $('#conteudo');
+painel.addEventListener('click', (e) => musica.clique(e));
+painel.addEventListener('change', (e) => musica.muda(e));
+painel.addEventListener('input', (e) => musica.entrada(e));
 painel.addEventListener('click', async (e) => {
   const t = e.target.closest('button'); if (!t) return;
   if (t.dataset.d) return agir('rolar', { expr: t.dataset.d });

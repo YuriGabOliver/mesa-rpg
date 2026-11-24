@@ -92,3 +92,21 @@ label.linha{display:flex;align-items:center;gap:8px;color:var(--ink);font-size:1
 @media (max-width:800px){
   #painel{position:absolute;left:0;right:0;bottom:0;width:auto;height:58%;border-left:0;border-top:1px solid var(--line);border-radius:14px 14px 0 0;box-shadow:0 -8px 24px #0008;z-index:5}
 }
+
+/* música */
+#abas button{font-size:13px}
+#t-som{padding:6px 10px}
+.mu-agora{padding:10px;background:var(--card);border:1px solid var(--line);border-radius:9px;min-height:44px}
+.mu-agora b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mu-tempo{color:var(--mut);font-size:13px;margin:4px 0}
+.mu-ctl{display:flex;gap:6px;margin-top:6px}
+.mu-vol{display:flex;align-items:center;gap:8px;margin-top:8px}
+.mu-vol input[type=range]{flex:1}
+#mu-lista{list-style:none;margin:8px 0;padding:0}
+#mu-lista li{display:flex;align-items:center;gap:6px;padding:6px 8px;margin-bottom:5px;background:var(--card);border:1px solid var(--line);border-radius:9px}
+#mu-lista li.tocando{border-color:var(--acc)}
+#mu-lista li.dica{display:block;border:0;background:none}
+.mu-tit{flex:1;min-width:0;display:flex;flex-direction:column}
+.mu-tit b,.mu-tit small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mu-tit small{color:var(--mut)}
+#mu-form{display:grid;gap:6px;margin:8px 0}

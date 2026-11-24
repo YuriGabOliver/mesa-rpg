@@ -33,7 +33,8 @@ async function contexto(b) {
   if (!idOk(m, 4, 16)) throw new Http(400, 'Código de mesa inválido');
   const pid = String(b.pid || '');
   if (!idOk(pid, 6, 32)) throw new Http(400, 'Identificação inválida');
-  const [row] = await rest('GET', `mesas?id=eq.${m}&select=id,nome,h,v,ativa`);
+  // select=* de propósito: se a coluna "musica" ainda não existir (migração v4 não rodada), o app continua funcionando
+  const [row] = await rest('GET', `mesas?id=eq.${m}&select=*`);
   if (!row) throw new Http(404, 'Mesa não encontrada');
   const mk = String(b.mk || '');
   const mestre = mk.length > 0 && igual(sha(mk), row.h);
@@ -59,7 +60,8 @@ async function estado(req, res) {
   const cli = Number(q.v) || 0;
   const [vr] = await rest('GET', `mesas?id=eq.${m}&select=v`);
   if (!vr) throw new Http(404, 'Mesa não encontrada');
-  if (cli && Number(vr.v) === cli) return res.status(200).json({ v: cli, mesmo: true });
+  // "agora" = hora do servidor: os clientes usam para acertar o relógio e tocar a música no mesmo ponto
+  if (cli && Number(vr.v) === cli) return res.status(200).json({ v: cli, mesmo: true, agora: Date.now() });
   const c = await contexto({ m, mk: req.headers['x-mk'], pid: req.headers['x-pid'], c: q.c });
   const [tk, nv, lg, jg, cs] = await Promise.all([
     rest('GET', `tokens?mesa=eq.${m}&cena=eq.${c.alvo}&select=dados`),
@@ -71,7 +73,8 @@ async function estado(req, res) {
   let tokens = tk.map((x) => x.dados);
   if (!c.mestre) tokens = tokens.filter((t) => t.vis !== false || t.dono === c.pid);
   const out = {
-    v: Number(c.row.v), nome: c.row.nome, papel: c.mestre ? 'mestre' : 'jogador', cena: c.cena, tokens,
+    v: Number(c.row.v), agora: Date.now(), musica: c.row.musica || null,
+    nome: c.row.nome, papel: c.mestre ? 'mestre' : 'jogador', cena: c.cena, tokens,
     nevoa: nv.map((x) => x.rect), log: lg.map((x) => x.dados).reverse(), jog: jg.map((x) => ({ id: x.id, ...x.dados })),
   };
   if (c.mestre) { out.cenas = cs.map((x) => ({ id: x.id, nome: x.nome })); out.ativa = c.ativa; out.vendo = c.alvo; out.cenaNome = c.cenaNome; }
@@ -125,6 +128,44 @@ function rolarDados(expr) {
     } else { const k = +mm[4]; total += sinal * k; det.push({ s: sinal, k }); }
   }
   return { e: s, d: det, s: total };
+}
+
+/* ---------- música sincronizada ----------
+   Estado guardado em mesas.musica: { id, a: 'p' (tocando) | 'x' (pausada), t: hora do servidor (ms), off: segundos no arquivo
+   quando "t" aconteceu, dur: duração em s, url, titulo }. Posição atual = (off + (agora - t)/1000) % dur enquanto toca.
+   Só o servidor carimba a hora, então o relógio do mestre não importa. */
+const posicaoMusica = (mu, agora) => (mu.a === 'p' ? (mu.off + (agora - mu.t) / 1000) % mu.dur : mu.off);
+
+function urlAudio(v) {
+  let u;
+  try { u = new URL(String(v || '').trim()); } catch { throw new Http(400, 'Link de áudio inválido'); }
+  if (u.protocol !== 'https:' || u.href.length > 800) throw new Http(400, 'O link do áudio precisa ser https:// e curto');
+  if (u.hostname === 'drive.google.com') throw new Http(400, 'Links do Google Drive não funcionam. Use Dropbox ou outro link direto.');
+  if (u.hostname === 'dropbox.com' || u.hostname.endsWith('.dropbox.com')) { u.searchParams.set('dl', '1'); u.hostname = 'dl.dropboxusercontent.com'; }
+  return u.href;
+}
+
+async function acaoMusica(c, acao, b) {
+  const atual = c.row.musica || null, agora = Date.now();
+  let nova = null;
+  if (acao === 'musicaTocar') {
+    const dur = Number(b.dur);
+    if (!(dur >= 1 && dur <= 86400)) throw new Http(400, 'Duração da faixa inválida (de 1 s a 24 h)');
+    nova = { id: rid(8), a: 'p', t: agora, off: 0, dur, url: urlAudio(b.url), titulo: txt(b.titulo, 60) || 'Faixa' };
+  } else if (acao !== 'musicaParar') {
+    if (!atual) throw new Http(400, 'Nenhuma faixa na mesa');
+    if (acao === 'musicaPausar') {
+      if (atual.a !== 'p') return; // já está pausada
+      nova = { ...atual, id: rid(8), a: 'x', t: agora, off: posicaoMusica(atual, agora) };
+    } else { // musicaRetomar
+      if (atual.a === 'p') return;
+      nova = { ...atual, id: rid(8), a: 'p', t: agora };
+    }
+  }
+  try { await bump(c.m, { musica: nova }); } catch (e) {
+    if (/musica/i.test(e.message)) throw new Http(500, 'Falta rodar o migracao-v4-musica.sql no Supabase para ligar a música.');
+    throw e;
+  }
 }
 
 // valida e prepara uma imagem enviada em base64
@@ -304,6 +345,12 @@ export default async function handler(req, res) {
       await bump(m);
       if (alvo.cena.img) await apagarImagem(`${m}/${alvo.cena.img}`);
       for (const t of tks) if (t.dados.img) await apagarImagem(`${m}/${t.dados.img}`);
+      return res.status(200).json({ ok: true });
+    }
+
+    if (['musicaTocar', 'musicaPausar', 'musicaRetomar', 'musicaParar'].includes(acao)) {
+      exigeMestre(c);
+      await acaoMusica(c, acao, b);
       return res.status(200).json({ ok: true });
     }
 

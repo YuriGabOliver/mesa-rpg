@@ -5,6 +5,10 @@ O mestre cria a mesa, sobe um mapa e manda o link; os jogadores entram pelo celu
 
 Projeto **independente**. Usa **Supabase** (banco, imagens e tempo real) e **Vercel** (site e API).
 
+## O que tem na versão 0.4
+
+- **Música sincronizada** (aba **Música**): o mestre monta uma biblioteca de links de áudio (Dropbox ou outro link público e direto), com título e tags, busca, importar e exportar CSV (mesmo formato do Tracks do Owlbear). Toca, pausa, retoma e para para todos. Todo mundo ouve o mesmo ponto da faixa, em loop, e quem entra depois já cai no ponto certo. Volume e mudo são de cada pessoa. Nada de áudio passa pela mesa: ela só guarda o link e a hora do servidor, então pesa quase nada.
+
 ## O que tem na versão 0.3
 
 - Criar mesa (você vira o mestre) e convidar por link, sem login
@@ -30,6 +34,12 @@ Navegador ──(ações e leitura)──▶ Função do Vercel (api/) ──▶
 - O navegador **nunca** fala direto com as tabelas. Só a função do Vercel, com a chave secreta, lê e escreve. É ela que confere quem é mestre e quem pode mexer em qual token.
 - O Realtime só avisa "mudou"; o navegador então busca o estado novo. Se o Realtime falhar, o site continua funcionando por consulta periódica (alguns segundos de atraso).
 - Imagens dos mapas ficam no Supabase Storage (bucket público `mapas`, nomes aleatórios).
+
+## Atualizando para a v0.4 (música)
+
+1. **Banco:** no Supabase, **SQL Editor → New query**, cole `supabase/migracao-v4-musica.sql` e clique em **Run** (adiciona uma coluna; não apaga nada).
+2. **Código:** envie os arquivos novos para o repositório (inclui o novo `musica.js`). O Vercel publica sozinho.
+3. Se publicar o código antes de rodar o SQL, a mesa continua funcionando; só a música avisa que falta a migração.
 
 ## Atualizando da v0.2 para a v0.3
 
@@ -103,4 +113,4 @@ Crie um repositório novo e envie todos os arquivos para a **raiz** (o `index.ht
 
 ## Próximos passos possíveis
 
-Música sincronizada, sistema de extensões, fichas por template (sacramento e gaia como sistemas), compêndio de regras, ping, desenho livre, mover token ao vivo durante o arrasto.
+Clima (chuva, neblina, etc.), sistema de extensões, fichas por template (sacramento e gaia como sistemas), compêndio de regras, ping, desenho livre, mover token ao vivo durante o arrasto.

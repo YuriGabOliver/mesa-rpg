@@ -13,6 +13,8 @@ create table if not exists public.mesas (
   usado  timestamptz not null default now()
 );
 
+alter table public.mesas add column if not exists musica jsonb;  -- v0.4: faixa atual da música sincronizada
+
 create table if not exists public.cenas (
   id    text not null,
   mesa  text not null references public.mesas(id) on delete cascade,
