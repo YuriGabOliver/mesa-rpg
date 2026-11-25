@@ -85,6 +85,16 @@
   </main>
 </section>
 
+<div id="excluir-modal" class="modal" hidden>
+  <form id="excluir-form" class="modal-box" role="alertdialog" aria-labelledby="ex-titulo" aria-describedby="ex-desc">
+    <h3 id="ex-titulo">Você tem certeza?</h3>
+    <p id="ex-desc">Isso apaga a mesa inteira: cenas, tokens, mapas, imagens, chat e histórico de dados. <b>Não dá para desfazer.</b></p>
+    <label for="ex-input">Para confirmar, escreva <b>confirmar</b> e aperte Enter</label>
+    <input id="ex-input" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="confirmar">
+    <p id="ex-erro" class="erro" hidden></p>
+    <div class="modal-botoes"><button type="button" class="b" id="ex-cancelar">Cancelar</button><button class="b perigo" id="ex-ok" disabled>Excluir mesa</button></div>
+  </form>
+</div>
 <section id="roll-popup" class="roll-popup" role="status" aria-live="polite" hidden><button id="roll-fechar" class="b mini" aria-label="Fechar resultado">Fechar</button><small id="roll-player"></small><b class="roll-label">Resultado</b><strong id="roll-total"></strong><span id="roll-expression"></span><span id="roll-detail"></span><b id="roll-kind"></b></section>
 <div id="toast" role="status"></div>
 <script type="module" src="/app.js"></script>

@@ -43,6 +43,8 @@ function supabaseFalso() {
         if (url.pathname.startsWith('/storage/v1/object/')) {
           const pub = url.pathname.startsWith('/storage/v1/object/public/');
           const caminho = url.pathname.replace(pub ? '/storage/v1/object/public/' : '/storage/v1/object/', '');
+          if (req.method === 'POST' && caminho === 'list/mapas') { const pre = JSON.parse(corpo).prefix + '/'; return fim(200, JSON.stringify([...arquivos.keys()].filter((k) => k.startsWith('mapas/' + pre)).map((k) => ({ name: k.slice(6 + pre.length), id: 'x' })))); }
+          if (req.method === 'DELETE' && caminho === 'mapas') { for (const p of JSON.parse(corpo).prefixes) arquivos.delete('mapas/' + p); return fim(200, '[]'); }
           if (req.method === 'POST') { arquivos.set(caminho, { buf: corpo, mime: req.headers['content-type'] }); return fim(200, '{"Key":"ok"}'); }
           if (req.method === 'DELETE') { arquivos.delete(caminho); return fim(200, '{}'); }
           const f = arquivos.get(caminho); if (!f) return fim(404, '{"error":"not found"}');

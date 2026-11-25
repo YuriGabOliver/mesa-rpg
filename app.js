@@ -49,10 +49,30 @@ async function iniciaRealtime(m) {
     E.sb = E.sb || window.supabase.createClient(CFG.url, CFG.anon, { auth: { persistSession: false, autoRefreshToken: false } });
     let deb = null;
     E.canal = E.sb.channel(`mesa-${m}`, { config: { broadcast: { self: false } } })
+      .on('broadcast', { event: 'arrasto' }, (m) => recebeArrasto(m && m.payload))
       .on('broadcast', { event: 'mudou' }, () => { clearTimeout(deb); deb = setTimeout(() => poll(true), 30); })
       .subscribe((status) => { E.rtOk = status === 'SUBSCRIBED'; if (E.rtOk) poll(true); atualizaSync(); });
   } catch { E.rtOk = false; }
 }
+/* ---------- arrasto ao vivo: quem mexe num token manda a posição ~16x/s direto pelos outros (Realtime), sem passar pelo servidor ---------- */
+let arrUlt = 0, arrTimer = null, arrPend = null;
+function emiteArrasto(p) { arrUlt = performance.now(); try { const r = E.canal.send({ type: 'broadcast', event: 'arrasto', payload: p }); if (r && r.catch) r.catch(() => {}); } catch { /* sem tempo real: fica só o resultado final */ } }
+function enviaArrasto(t, id, x, y, fim) {
+  if (!E.rtOk || !E.canal) return;
+  const p = { t, id, x: Math.round(x), y: Math.round(y), pid: E.pid, fim: !!fim };
+  const espera = 60 - (performance.now() - arrUlt);
+  if (fim || espera <= 0) { clearTimeout(arrTimer); arrTimer = null; arrPend = null; return emiteArrasto(p); }
+  arrPend = p;
+  if (!arrTimer) arrTimer = setTimeout(() => { arrTimer = null; const q = arrPend; arrPend = null; if (q) emiteArrasto(q); }, espera);
+}
+function recebeArrasto(p) {
+  if (!p || !E.est || !mapa || p.pid === E.pid || typeof p.id !== 'string' || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+  const quem = (E.est.jog || []).find((j) => j.id === p.pid), gm = !!(quem && quem.mestre);
+  if (p.t === 'e') { if (!gm) return; }
+  else { const tk = E.est.tokens.find((t) => t.id === p.id); if (!tk || (!gm && tk.dono !== p.pid)) return; } // só vale de quem pode mexer naquele token (e só aparece o que este aparelho já enxerga)
+  mapa.arrastoRemoto(p.t === 'e' ? 'e' : 't', p.id, p.x, p.y, p.fim);
+}
+window.__recebeArrasto = recebeArrasto;
 function atualizaSync() { const el = $('#m-sync'); if (el) el.textContent = E.rtOk ? 'Sincronização: tempo real ativo.' : 'Sincronização: consulta periódica (alguns segundos de atraso).'; }
 
 /* ---------- utilidades ---------- */
@@ -102,6 +122,7 @@ function recentes(atualiza) {
 }
 
 /* ---------- home ---------- */
+function esquece(m) { if (!m) return; ls.set('ml.mesas', ls.get('ml.mesas', []).filter((x) => x.m !== m)); try { localStorage.removeItem('ml.mk.' + m); localStorage.removeItem('ml.vendo.' + m); } catch { /* ok */ } }
 function mostraHome(erro) {
   $('#mesa').hidden = true; $('#home').hidden = false;
   history.replaceState(null, '', '/');
@@ -167,6 +188,7 @@ function iniciaMapa() {
   mapa = new Mapa($('#cv'), {
     podeMover: (t) => t.dono === E.pid,
     onMover: (id, x, y) => { api('tokenMove', { id, x, y }).then(() => poll(true)).catch((e) => { toast(e.message); poll(true); }); },
+    onArrastar: enviaArrasto,
     onMoverElemento: (id, x, y) => { agir('elementoMove', { id, x, y }); },
     onNevoa: (op) => agir('nevoaAdd', { ops: [op] }),
     onParede: (o) => { if (o.op === 'add') agir('paredeAdd', { segs: o.segs }); else if (o.op === 'del') agir('paredeDel', { id: o.id }); else if (o.op === 'tipo') agir('paredeTipo', { id: o.id }); else if (o.op === 'alterna') agir('portaAlterna', { id: o.id }); else if (o.op === 'tranca') agir('portaTrancar', { id: o.id }); },
@@ -179,6 +201,24 @@ function iniciaMapa() {
   window.__mapa = mapa; // útil para depuração no console
   clima = new Clima($('#cv-clima'), mapa); clima.ligar(ls.get('ml.clima', true)); window.__clima = clima;
 }
+
+/* ---------- excluir a mesa (só o mestre, com confirmação digitada) ---------- */
+const exModal = $('#excluir-modal'), exInput = $('#ex-input'), exOk = $('#ex-ok');
+const confirmou = () => exInput.value.trim().toLowerCase() === 'confirmar';
+function abreExcluir() { exInput.value = ''; exOk.disabled = true; $('#ex-erro').hidden = true; exModal.hidden = false; exInput.focus(); }
+function fechaExcluir() { exModal.hidden = true; }
+exInput.addEventListener('input', () => { exOk.disabled = !confirmou(); });
+$('#ex-cancelar').addEventListener('click', fechaExcluir);
+exModal.addEventListener('pointerdown', (e) => { if (e.target === exModal) fechaExcluir(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !exModal.hidden) fechaExcluir(); });
+$('#excluir-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!confirmou() || !souMestre()) return;
+  exOk.disabled = true; exOk.textContent = 'Excluindo…';
+  try { await api('mesaExcluir', { confirmacao: exInput.value.trim() }); const id = E.m; fechaExcluir(); esquece(id); sair('Mesa excluída.'); }
+  catch (er) { const x = $('#ex-erro'); x.textContent = er.message; x.hidden = false; exOk.disabled = !confirmou(); }
+  finally { exOk.textContent = 'Excluir mesa'; }
+});
 
 /* ---------- sincronização (polling leve) ---------- */
 function abrirMenuToken(id, x, y, origem = null) {
@@ -234,7 +274,7 @@ async function poll(forcar = false) {
     const r = await fetch(`/api/mesa?m=${E.m}&v=${forcar ? 0 : E.v}&c=${encodeURIComponent(E.vendo || '')}`, { headers: { 'x-mk': E.mk || '', 'x-pid': E.pid }, cache: 'no-store' });
     const j = await r.json().catch(() => ({}));
     if (r.ok && j.agora) musica.relogio(j.agora, t0, Date.now()); // acerta o relógio com o servidor (música no mesmo ponto)
-    if (!r.ok) { if (r.status === 404) { sair('Mesa não encontrada. Confira o link.'); return; } throw new Error(j.erro || r.status); }
+    if (!r.ok) { if (r.status === 404) { if (/Mesa não encontrada/.test(j.erro || '')) esquece(E.m); sair('Esta mesa não existe mais (o mestre pode ter excluído) ou o link está errado.'); return; } throw new Error(j.erro || r.status); }
     E.falhas = 0; $('#t-off').hidden = true;
     if (!j.mesmo && !(E.pend > 0 || mapa.arrastando)) aplica(j);
   } catch { if (++E.falhas >= 3) $('#t-off').hidden = false; }
@@ -376,6 +416,7 @@ function desenhaPainel() {
       <label class="linha"><input type="checkbox" id="m-clima"> Mostrar efeitos de clima</label>
       <p class="dica">Desligue se a mesa ficar pesada no seu celular. Só afeta você.</p>
     </div><div class="sec"><h3>Na mesa agora</h3><ul id="jogs"></ul><p class="dica" id="m-sync"></p></div>
+    ${souMestre() ? '<div class="sec zona-perigo"><h3>Zona de perigo</h3><p class="dica">Exclui a mesa inteira e libera o espaço das imagens.</p><button class="b perigo" id="m-excluir">Excluir esta mesa</button></div>' : ''}
     <button class="b" id="m-sair">Sair da mesa</button>`;
   atualizaPainel(true);
   if (E.aba === 'musica') musica.abre(souMestre());
@@ -486,6 +527,7 @@ painel.addEventListener('click', async (e) => {
   if (t.dataset.d) return agir('rolar', { expr: t.dataset.d });
   if (t.dataset.cp) return copiar(t.dataset.cp === 'j' ? linkJogador() : linkMestre());
   if (t.id === 'm-sair') return sair();
+  if (t.id === 'm-excluir') return abreExcluir();
   if (t.id === 'b-pw-limpar') return confirm('Apagar todas as paredes e portas desta cena?') ? agir('paredeLimpar') : undefined;
   if (t.id === 'b-cobrir') return agir('nevoaCobrir');
   if (t.id === 'b-desfaz') return agir('nevoaDesfazer');

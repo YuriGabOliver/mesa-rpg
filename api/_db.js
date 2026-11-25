@@ -52,3 +52,28 @@ export async function subirImagem(caminho, buffer, mime) {
 export async function apagarImagem(caminho) {
   try { confere(); await fetch(`${URL_()}/storage/v1/object/mapas/${caminho}`, { method: 'DELETE', headers: cab() }); } catch { /* ignora */ }
 }
+
+// Lista os arquivos da pasta da mesa no bucket (para apagar tudo ao excluir a mesa).
+export async function listarImagens(pasta) {
+  try {
+    confere();
+    const r = await fetch(`${URL_()}/storage/v1/object/list/mapas`, {
+      method: 'POST', headers: cab({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ prefix: pasta, limit: 1000, offset: 0 }),
+    });
+    if (!r.ok) return [];
+    const l = await r.json();
+    return Array.isArray(l) ? l.filter((x) => x && x.name && x.id !== null).map((x) => x.name) : [];
+  } catch { return []; }
+}
+// Apaga vários arquivos de uma vez (até 1000 por chamada).
+export async function apagarImagens(caminhos) {
+  try {
+    confere();
+    for (let i = 0; i < caminhos.length; i += 500) {
+      await fetch(`${URL_()}/storage/v1/object/mapas`, {
+        method: 'DELETE', headers: cab({ 'Content-Type': 'application/json' }), body: JSON.stringify({ prefixes: caminhos.slice(i, i + 500) }),
+      });
+    }
+  } catch { /* ignora */ }
+}

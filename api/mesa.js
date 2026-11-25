@@ -1,6 +1,6 @@
 // API principal da mesa (Supabase). GET = estado. POST = ações. O servidor é quem valida permissões.
 import crypto from 'node:crypto';
-import { rest, avisa, subirImagem, apagarImagem } from './_db.js';
+import { rest, avisa, subirImagem, apagarImagem, listarImagens, apagarImagens } from './_db.js';
 import { caminhoLivre } from '../geo.js';
 
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
@@ -482,6 +482,20 @@ export default async function handler(req, res) {
       const [r] = idOk(id, 2, 8) ? await rest('GET', `cenas?mesa=eq.${m}&id=eq.${id}&select=id`) : [];
       if (!r) throw new Http(404, 'Cena não encontrada');
       await bump(m, { ativa: id });
+      return res.status(200).json({ ok: true });
+    }
+    if (acao === 'mesaExcluir') { // apaga tudo da mesa: banco e imagens (libera espaço)
+      exigeMestre(c);
+      if (String(b.confirmacao || '').trim().toLowerCase() !== 'confirmar') throw new Http(400, 'Digite "confirmar" para excluir a mesa');
+      const cenasM = await rest('GET', `cenas?mesa=eq.${m}&select=cena`);
+      const tksM = await rest('GET', `tokens?mesa=eq.${m}&select=dados`);
+      const imgs = new Set(await listarImagens(m));
+      for (const x of cenasM) { if (x.cena.img) imgs.add(x.cena.img); for (const e of x.cena.elementos || []) if (e.img) imgs.add(e.img); }
+      for (const t of tksM) if (t.dados && t.dados.img) imgs.add(t.dados.img);
+      for (const tab of ['chat', 'rolagens', 'nevoa', 'tokens', 'jogadores', 'cenas']) { try { await rest('DELETE', `${tab}?mesa=eq.${m}`); } catch { /* a exclusão da mesa apaga em cascata */ } }
+      await rest('DELETE', `mesas?id=eq.${m}`);
+      await avisa(m, 0); // quem está na mesa descobre na hora que ela acabou
+      await apagarImagens([...imgs].map((n) => `${m}/${n}`));
       return res.status(200).json({ ok: true });
     }
     if (acao === 'cenaExcluir') {

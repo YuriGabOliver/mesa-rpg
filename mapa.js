@@ -15,10 +15,10 @@ export class Mapa {
     this.fogA = document.createElement('canvas'); this.fogB = document.createElement('canvas'); this.fogInfo = null;
     this.imgs = new Map(); this.fogSujo = true; this.sujo = true; this.dpr = 1;
     this.ultimoToque = { id: null, t: 0 }; this.regua = null; this.previa = null; this.primeiraVez = true;
-    this.parede = { modo: 'parede' }; this.pw = null; this.bloq = []; this.pendentePorta = null; // névoa dinâmica: ferramenta de paredes e o que bloqueia a visão
+    this.parede = { modo: 'parede' }; this.pw = null; this.bloq = []; this.pendentePorta = null; this.remotos = new Map(); this.tUlt = performance.now(); // névoa dinâmica: ferramenta de paredes e o que bloqueia a visão
     new ResizeObserver(() => this.redimensiona()).observe(canvas.parentElement);
     this.eventos(); this.redimensiona();
-    const laco = () => { if (this.sujo) { this.sujo = false; this.desenha(); } requestAnimationFrame(laco); };
+    const laco = (agora) => { this.passoRemotos(agora || performance.now()); if (this.sujo) { this.sujo = false; this.desenha(); } requestAnimationFrame(laco); };
     requestAnimationFrame(laco);
   }
   get arrastando() { return !!this.acao && (this.acao.tipo === 'token' || this.acao.tipo === 'elemento'); }
@@ -46,13 +46,35 @@ export class Mapa {
     im.onload = () => { this.img = im; this.sujo = true; };
     im.src = url;
   }
+  // Arrasto ao vivo de outra pessoa: guarda o alvo e o laço desliza o token até ele (suave, sem teleporte)
+  arrastoRemoto(tipo, id, x, y, fim) {
+    const o = (tipo === 'e' ? this.elementos : this.tokens).find((k) => k.id === id);
+    if (!o || (this.acao && this.acao.id === id)) return;
+    let r = this.remotos.get(id); if (!r) { r = { tipo }; this.remotos.set(id, r); }
+    r.ax = Math.min(this.cena.w, Math.max(0, x)); r.ay = Math.min(this.cena.h, Math.max(0, y)); r.t = performance.now(); r.fim = !!fim; this.sujo = true;
+  }
+  passoRemotos(agora) {
+    const dt = Math.min(100, Math.max(0, agora - this.tUlt)); this.tUlt = agora;
+    if (!this.remotos.size) return;
+    const k = 1 - Math.exp(-dt / 55);
+    for (const [id, r] of this.remotos) {
+      const o = (r.tipo === 'e' ? this.elementos : this.tokens).find((q) => q.id === id);
+      if (!o || agora - r.t > 1500) { this.remotos.delete(id); continue; }
+      const dx = r.ax - o.x, dy = r.ay - o.y;
+      if (Math.hypot(dx, dy) < 0.5) { o.x = r.ax; o.y = r.ay; if (r.fim) this.remotos.delete(id); }
+      else { o.x += dx * k; o.y += dy * k; }
+      if (r.tipo === 't' && o.visao > 0) this.fogSujo = true;
+      this.sujo = true;
+    }
+  }
   setTokens(t) {
-    this.tokens = t.map((x) => ({ ...x }));
+    const velhos = new Map(this.tokens.map((k) => [k.id, k]));
+    this.tokens = t.map((x) => { const v = this.remotos.has(x.id) && velhos.get(x.id); return v ? { ...x, x: v.x, y: v.y } : { ...x }; });
     if (this.sel && !this.tokens.find((k) => k.id === this.sel)) this.sel = null;
     this.fogSujo = true; this.sujo = true;
   }
   setNevoa(n) { this.nevoa = n; this.fogSujo = true; this.sujo = true; }
-  setElementos(e) { this.elementos = Array.isArray(e) ? e.map((x) => ({ ...x })) : []; this.sujo = true; }
+  setElementos(e) { const velhos = new Map(this.elementos.map((k) => [k.id, k])); this.elementos = Array.isArray(e) ? e.map((x) => { const v = this.remotos.has(x.id) && velhos.get(x.id); return v ? { ...x, x: v.x, y: v.y } : { ...x }; }) : []; this.sujo = true; }
   selecionar(id, avisa = true) { if (this.sel === id) return; this.sel = id; this.sujo = true; if (avisa && this.cb.onSelecionar) this.cb.onSelecionar(id); }
   centralizar() {
     if (!this.W) return;
@@ -170,9 +192,10 @@ export class Mapa {
           const ignoraPortas = !t.dono && t.bloqueiaPortas === false;
           if (this.cena.bloqueia === false || caminhoLivre(this.cena.paredes, a.x0, a.y0, x, y, ignoraPortas)) {
             t.x = x; t.y = y; a.mexeu = true; if (t.visao > 0) this.fogSujo = true;
+            if (this.cb.onArrastar) this.cb.onArrastar('t', t.id, x, y);
           }
         }
-      } else if (a.tipo === 'elemento') { const el = this.elementos.find((k) => k.id === a.id), p = this.mundo(e.offsetX, e.offsetY); if (el) { el.x = Math.min(this.cena.w, Math.max(0, p.x - a.dx)); el.y = Math.min(this.cena.h, Math.max(0, p.y - a.dy)); a.mexeu = true; } }
+      } else if (a.tipo === 'elemento') { const el = this.elementos.find((k) => k.id === a.id), p = this.mundo(e.offsetX, e.offsetY); if (el) { el.x = Math.min(this.cena.w, Math.max(0, p.x - a.dx)); el.y = Math.min(this.cena.h, Math.max(0, p.y - a.dy)); a.mexeu = true; if (this.cb.onArrastar) this.cb.onArrastar('e', el.id, el.x, el.y); } }
       else if (a.tipo === 'parede' && this.pw) this.pw.b = this.snapParede(this.mundo(e.offsetX, e.offsetY));
       else if (a.tipo === 'regua') this.regua.b = this.mundo(e.offsetX, e.offsetY);
       else if (a.tipo === 'nevoa' && this.previa) {
@@ -187,7 +210,7 @@ export class Mapa {
       const a = this.acao;
       if (a && a.tipo === 'pinca') { if (this.ptrs.size < 2) this.acao = null; return; }
       if (!a) return;
-      if (a.tipo === 'elemento' && a.mexeu) { const el = this.elementos.find((k) => k.id === a.id); if (el && this.cb.onMoverElemento) this.cb.onMoverElemento(el.id, el.x, el.y); }
+      if (a.tipo === 'elemento' && a.mexeu) { const el = this.elementos.find((k) => k.id === a.id); if (el && this.cb.onMoverElemento) this.cb.onMoverElemento(el.id, el.x, el.y); if (el && this.cb.onArrastar) this.cb.onArrastar('e', el.id, el.x, el.y, true); }
       else if (a.tipo === 'token' && a.mexeu) {
         const t = this.tokens.find((k) => k.id === a.id);
         if (t) {
@@ -195,6 +218,7 @@ export class Mapa {
           if (this.cena.bloqueia !== false && !caminhoLivre(this.cena.paredes, a.x0, a.y0, q.x, q.y, !t.dono && t.bloqueiaPortas === false)) { // parede ou porta fechada no caminho: volta
             t.x = a.x0; t.y = a.y0; this.fogSujo = true; if (this.cb.aviso) this.cb.aviso('Caminho bloqueado por uma parede ou porta fechada');
           } else { t.x = q.x; t.y = q.y; this.fogSujo = true; if (this.cb.onMover) this.cb.onMover(t.id, t.x, t.y); }
+          if (this.cb.onArrastar) this.cb.onArrastar('t', t.id, t.x, t.y, true);
         }
       } else if (a.tipo === 'parede' && this.pw) {
         const { a: pa, b: pb } = this.pw, m = this.parede.modo; this.pw = null;
