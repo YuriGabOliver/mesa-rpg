@@ -5,6 +5,14 @@ O mestre cria a mesa, sobe um mapa e manda o link; os jogadores entram pelo celu
 
 Projeto **independente**. Usa **Supabase** (banco, imagens e tempo real) e **Vercel** (site e API).
 
+## O que tem na versão 0.7
+
+- Central de efeitos e sons de fundo simultâneos à música; várias faixas podem tocar em paralelo. Biblioteca fica neste navegador e cada pessoa controla seu próprio volume.
+- Iniciativa por cena: selecione tokens, registre os resultados, acompanhe o turno atual e avance a rodada.
+- Chat sincronizado: envie como jogador ou personagem. A leitura em voz alta é opcional e usa a fala disponível no navegador.
+- Elementos visuais por cena: adicione imagens em formato livre, mantenha a proporção, arraste, redimensione e oculte para os jogadores.
+- Para instalações existentes, execute `supabase/migracao-v7-recursos.sql` antes de publicar o código novo.
+
 ## O que tem na versão 0.5
 
 - **Biblioteca de tokens:** remova um token do mapa para guardá-lo sem excluir. Coloque-o de volta na cena atual ou duplique-o para outra cena. No computador, clique com o botão direito no token; no celular, use **Ações** na lista de tokens.
@@ -48,6 +56,11 @@ Navegador ──(ações e leitura)──▶ Função do Vercel (api/) ──▶
 1. **Banco:** no Supabase, **SQL Editor → New query**, cole `supabase/migracao-v4-musica.sql` e clique em **Run** (adiciona uma coluna; não apaga nada).
 2. **Código:** envie os arquivos novos para o repositório (inclui o novo `musica.js`). O Vercel publica sozinho.
 3. Se publicar o código antes de rodar o SQL, a mesa continua funcionando; só a música avisa que falta a migração.
+
+## Atualizando para a v0.7
+
+1. No Supabase, abra **SQL Editor → New query**, cole `supabase/migracao-v7-recursos.sql` e clique em **Run**. Ela adiciona a coluna de efeitos e a tabela de chat sem apagar dados.
+2. Publique os arquivos atualizados no repositório; o Vercel publica o site e a API.
 
 ## Atualizando da v0.2 para a v0.3
 

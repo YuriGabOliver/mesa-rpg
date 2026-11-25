@@ -11,7 +11,7 @@ const num = (v, a, b, d) => { v = Number(v); return Number.isFinite(v) ? Math.mi
 const txt = (v, n) => String(v ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, n);
 const igual = (a, b) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 const COR = /^#[0-9a-fA-F]{6}$/;
-const MAX_NEVOA = 300, MAX_LOG = 50, MAX_CENAS = 30;
+const MAX_NEVOA = 300, MAX_LOG = 50, MAX_CENAS = 30, MAX_CHAT = 100, MAX_EFEITOS = 16, MAX_ELEMENTOS = 100;
 const EXT = { 'image/webp': 'webp', 'image/jpeg': 'jpg', 'image/png': 'png' };
 const novoV = () => Date.now() * 1000 + Math.floor(Math.random() * 1000); // só precisa ser diferente a cada mudança
 const idOk = (x, min, max) => new RegExp(`^[a-z0-9]{${min},${max}}$`).test(String(x));
@@ -72,19 +72,22 @@ async function estado(req, res) {
   // "agora" = hora do servidor: os clientes usam para acertar o relógio e tocar a música no mesmo ponto
   if (cli && Number(vr.v) === cli) return res.status(200).json({ v: cli, mesmo: true, agora: Date.now() });
   const c = await contexto({ m, mk: req.headers['x-mk'], pid: req.headers['x-pid'], c: q.c });
-  const [tk, nv, lg, jg, cs, todosTokens] = await Promise.all([
+  const [tk, nv, lg, jg, cs, todosTokens, chat] = await Promise.all([
     rest('GET', `tokens?mesa=eq.${m}&cena=eq.${c.alvo}&select=dados`),
     rest('GET', `nevoa?mesa=eq.${m}&cena=eq.${c.alvo}&select=rect&order=id.asc`),
     rest('GET', `rolagens?mesa=eq.${m}&select=dados&order=id.desc&limit=${MAX_LOG}`),
     rest('GET', `jogadores?mesa=eq.${m}&select=id,dados`),
     c.mestre ? rest('GET', `cenas?mesa=eq.${m}&select=id,nome,ordem&order=ordem.asc,id.asc`) : Promise.resolve(null),
     c.mestre ? rest('GET', `tokens?mesa=eq.${m}&select=cena,dados`) : rest('GET', `tokens?mesa=eq.${m}&dados->>dono=eq.${c.pid}&select=cena,dados`),
+    rest('GET', `chat?mesa=eq.${m}&select=id,dados&order=id.desc&limit=${MAX_CHAT}`).catch((e) => { if (/PGRST205|Could not find the table/i.test(e.message)) return []; throw e; }),
   ]);
   let tokens = tk.map((x) => x.dados);
   if (!c.mestre) tokens = tokens.filter((t) => t.vis !== false || t.dono === c.pid);
   const out = {
-    v: Number(c.row.v), agora: Date.now(), musica: c.row.musica || null,
+    v: Number(c.row.v), agora: Date.now(), musica: c.row.musica || null, efeitos: (c.row.efeitos || []).filter((x) => x.loop || Date.now() < x.t + x.dur * 1000),
     nome: c.row.nome, papel: c.mestre ? 'mestre' : 'jogador', cena: c.cena, tokens,
+    elementos: (c.cena.elementos || []).filter((x) => c.mestre || x.vis !== false), iniciativa: c.cena.iniciativa || null,
+    chat: chat.reverse().map((x) => ({ id: x.id, ...x.dados })),
     nevoa: nv.map((x) => x.rect), log: lg.map((x) => x.dados).reverse(), jog: jg.map((x) => ({ id: x.id, ...x.dados })),
   };
   if (c.mestre) {
@@ -356,6 +359,53 @@ export default async function handler(req, res) {
     }
 
     /* ---------- névoa ---------- */
+    /* Recursos sincronizados: elementos graficos, iniciativa, chat e efeitos. */
+    if (['elementoAdd', 'elementoMove', 'elementoEdit', 'elementoDel'].includes(acao)) {
+      exigeMestre(c);
+      const lista = Array.isArray(cena.elementos) ? cena.elementos : [], id = txt(b.id, 12);
+      if (acao === 'elementoAdd') {
+        if (lista.length >= MAX_ELEMENTOS) throw new Http(400, `Limite de ${MAX_ELEMENTOS} elementos por cena`);
+        const im = leImagem(b, 1200000), arq = `e-${rid(8)}.${im.ext}`;
+        await subirImagem(`${m}/${arq}`, im.buf, im.mime);
+        const razao = num(b.razao, 0.15, 6, 1), altura = Math.min(cena.h, num(b.h, 30, 900, cena.grade.size * 2)), largura = Math.min(cena.w, Math.round(altura * razao));
+        const el = { id: rid(6), nome: txt(b.nome, 40) || 'Elemento', img: arq, x: num(b.x, 0, cena.w, cena.w / 2), y: num(b.y, 0, cena.h, cena.h / 2), w: largura, h: Math.round(largura / razao), vis: true };
+        await rest('PATCH', `cenas?mesa=eq.${m}&id=eq.${c.alvo}`, { corpo: { cena: { ...cena, elementos: [...lista, el] } }, prefer: 'return=minimal' });
+        await bump(m); return res.status(200).json({ ok: true, id: el.id });
+      }
+      const alvo = lista.find((x) => x.id === id);
+      if (!alvo) throw new Http(404, 'Elemento nao encontrado');
+      const nova = acao === 'elementoDel' ? lista.filter((x) => x.id !== id) : lista.map((x) => x.id !== id ? x : acao === 'elementoMove' ? { ...x, x: num(b.x, 0, cena.w, x.x), y: num(b.y, 0, cena.h, x.y) } : { ...x, vis: b.vis === undefined ? x.vis : !!b.vis, w: num(b.w, 30, cena.w, x.w), h: num(b.h, 30, cena.h, x.h) });
+      await rest('PATCH', `cenas?mesa=eq.${m}&id=eq.${c.alvo}`, { corpo: { cena: { ...cena, elementos: nova } }, prefer: 'return=minimal' });
+      await bump(m);
+      if (acao === 'elementoDel') { const cenas = await rest('GET', `cenas?mesa=eq.${m}&select=cena`); if (!cenas.some((x) => (x.cena.elementos || []).some((e) => e.img === alvo.img))) await apagarImagem(`${m}/${alvo.img}`); }
+      return res.status(200).json({ ok: true });
+    }
+    if (['iniciativaSalvar', 'iniciativaAvancar', 'iniciativaLimpar'].includes(acao)) {
+      exigeMestre(c); let iniciativa = cena.iniciativa || null;
+      if (acao === 'iniciativaLimpar') iniciativa = null;
+      else if (acao === 'iniciativaSalvar') {
+        const ids = [...new Set((Array.isArray(b.turnos) ? b.turnos : []).map((x) => txt(x.id, 12)))];
+        if (!ids.length || ids.length > 40) throw new Http(400, 'Selecione de 1 a 40 tokens');
+        const tokens = await rest('GET', `tokens?mesa=eq.${m}&cena=eq.${c.alvo}&select=id,dados`), byId = new Map(tokens.map((x) => [x.id, x.dados]));
+        const turnos = ids.map((id) => { if (!byId.has(id)) throw new Http(400, 'Token fora desta cena'); const valor = Number((b.turnos || []).find((x) => x.id === id)?.valor); if (!Number.isFinite(valor) || valor < -9999 || valor > 99999) throw new Http(400, 'Valor de iniciativa invalido'); return { id, nome: txt(byId.get(id).nome, 40) || 'Token', valor }; }).sort((a, b) => b.valor - a.valor);
+        iniciativa = { turnos, ativo: 0, rodada: 1, ativa: true };
+      } else { if (!iniciativa?.turnos?.length) throw new Http(400, 'Inicie uma iniciativa primeiro'); const ativo = iniciativa.ativo + 1, virou = ativo >= iniciativa.turnos.length; iniciativa = { ...iniciativa, ativo: virou ? 0 : ativo, rodada: iniciativa.rodada + (virou ? 1 : 0) }; }
+      await rest('PATCH', `cenas?mesa=eq.${m}&id=eq.${c.alvo}`, { corpo: { cena: { ...cena, iniciativa } }, prefer: 'return=minimal' }); await bump(m); return res.status(200).json({ ok: true });
+    }
+    if (acao === 'chatEnviar') {
+      const texto = txt(b.texto, 600); if (!texto) throw new Http(400, 'Escreva uma mensagem');
+      const [jogador] = await rest('GET', `jogadores?mesa=eq.${m}&id=eq.${c.pid}&select=dados`); if (!jogador) throw new Http(403, 'Entre novamente na mesa');
+      let nome = jogador.dados.nome || 'Jogador', tokenId = null;
+      if (b.tokenId) { tokenId = txt(b.tokenId, 12); const [token] = await rest('GET', `tokens?mesa=eq.${m}&id=eq.${tokenId}&cena=eq.${c.alvo}&select=dados`); if (!token || (!c.mestre && token.dados.dono !== c.pid)) throw new Http(403, 'Voce nao pode falar por esse personagem'); nome = token.dados.nome || nome; }
+      else if (b.como === 'mestre') { exigeMestre(c); nome = `${nome} (Mestre)`; }
+      await rest('POST', 'chat', { corpo: { mesa: m, dados: { t: Date.now(), pid: c.pid, nome: txt(nome, 40), texto, tokenId } }, prefer: 'return=minimal' }); await limita('chat', `mesa=eq.${m}`, MAX_CHAT); await bump(m); return res.status(200).json({ ok: true });
+    }
+    if (['efeitoTocar', 'efeitoParar', 'efeitosParar'].includes(acao)) {
+      exigeMestre(c); let efeitos = (c.row.efeitos || []).filter((x) => x.loop || Date.now() < x.t + x.dur * 1000);
+      if (acao === 'efeitoTocar') { const dur = Number(b.dur); if (!(dur >= 1 && dur <= 86400)) throw new Http(400, 'Duracao invalida'); if (efeitos.length >= MAX_EFEITOS) throw new Http(400, `Limite de ${MAX_EFEITOS} sons`); efeitos.push({ id: rid(8), t: Date.now(), dur, url: urlAudio(b.url), titulo: txt(b.titulo, 60) || 'Efeito', loop: !!b.loop }); }
+      else if (acao === 'efeitosParar') efeitos = []; else efeitos = efeitos.filter((x) => x.id !== txt(b.id, 12));
+      try { await bump(m, { efeitos }); } catch (e) { if (/efeitos/i.test(e.message)) throw new Http(500, 'Rode migracao-v7-recursos.sql no Supabase.'); throw e; } return res.status(200).json({ ok: true });
+    }
     if (acao === 'nevoaAdd') {
       exigeMestre(c);
       const lista = [].concat(Array.isArray(b.ops) ? b.ops : [], Array.isArray(b.rects) ? b.rects : []);
@@ -450,6 +500,8 @@ export default async function handler(req, res) {
       await bump(m);
       if (alvo.cena.img) await apagarImagem(`${m}/${alvo.cena.img}`);
       for (const img of new Set(tks.map((t) => t.dados.img).filter(Boolean))) await apagaImagemTokenSeOrfa(m, img);
+      const cenasRestantes = await rest('GET', `cenas?mesa=eq.${m}&select=cena`);
+      for (const img of new Set((alvo.cena.elementos || []).map((e) => e.img).filter(Boolean))) if (!cenasRestantes.some((x) => (x.cena.elementos || []).some((e) => e.img === img))) await apagarImagem(`${m}/${img}`);
       return res.status(200).json({ ok: true });
     }
 
@@ -473,6 +525,7 @@ export default async function handler(req, res) {
   } catch (e) {
     if (e.http) return res.status(e.http).json({ erro: e.message });
     if (e.message === 'SEM_BANCO') return res.status(500).json({ erro: 'Banco de dados não configurado (veja o README, passo do Supabase).' });
+    if (/Supabase.*chat/i.test(e.message)) return res.status(500).json({ erro: 'Rode supabase/migracao-v7-recursos.sql no Supabase para ativar o chat.' });
     console.error(e);
     const bd = /^Supabase/.test(e.message);
     return res.status(500).json({ erro: bd ? 'Erro no banco de dados. Se o projeto Supabase está pausado, reative-o no painel (veja o README). Se atualizou de versão, rode o migracao-v3.sql.' : 'Erro no servidor' });

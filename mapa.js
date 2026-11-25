@@ -9,7 +9,7 @@ export class Mapa {
     this.c = canvas; this.g = canvas.getContext('2d'); this.cb = cb || {};
     this.view = { x: 0, y: 0, s: 1 };
     this.cena = { w: 1600, h: 1000, grade: { on: true, size: 70, snap: true, m: 1.5 }, nevoa: false };
-    this.img = null; this.tokens = []; this.nevoa = []; this.mestre = false;
+    this.img = null; this.tokens = []; this.elementos = []; this.nevoa = []; this.mestre = false;
     this.ferr = 'mover'; this.sel = null; this.ptrs = new Map(); this.acao = null;
     this.nevoaFerr = { acao: 'r', modo: 'rect', raio: 40 }; // acao: r revelar / h esconder; modo: rect, circ, pincel
     this.fogA = document.createElement('canvas'); this.fogB = document.createElement('canvas'); this.fogInfo = null;
@@ -21,7 +21,7 @@ export class Mapa {
     const laco = () => { if (this.sujo) { this.sujo = false; this.desenha(); } requestAnimationFrame(laco); };
     requestAnimationFrame(laco);
   }
-  get arrastando() { return !!this.acao && this.acao.tipo === 'token'; }
+  get arrastando() { return !!this.acao && (this.acao.tipo === 'token' || this.acao.tipo === 'elemento'); }
   redimensiona() {
     const p = this.c.parentElement, r = p.getBoundingClientRect();
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -52,6 +52,7 @@ export class Mapa {
     this.fogSujo = true; this.sujo = true;
   }
   setNevoa(n) { this.nevoa = n; this.fogSujo = true; this.sujo = true; }
+  setElementos(e) { this.elementos = Array.isArray(e) ? e.map((x) => ({ ...x })) : []; this.sujo = true; }
   selecionar(id, avisa = true) { if (this.sel === id) return; this.sel = id; this.sujo = true; if (avisa && this.cb.onSelecionar) this.cb.onSelecionar(id); }
   centralizar() {
     if (!this.W) return;
@@ -75,6 +76,7 @@ export class Mapa {
     }
     return null;
   }
+  hitElemento(p) { for (let i = this.elementos.length - 1; i >= 0; i--) { const e = this.elementos[i]; if (p.x >= e.x - e.w / 2 && p.x <= e.x + e.w / 2 && p.y >= e.y - e.h / 2 && p.y <= e.y + e.h / 2) return e; } return null; }
   encaixa(t) {
     const g = this.cena.grade;
     if (!g.on || !g.snap) return { x: t.x, y: t.y };
@@ -119,9 +121,9 @@ export class Mapa {
     c.addEventListener('contextmenu', (e) => e.preventDefault());
     c.addEventListener('wheel', (e) => { e.preventDefault(); this.zoomEm(e.offsetX, e.offsetY, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
     c.addEventListener('contextmenu', (e) => {
-      const t = this.hit(this.mundo(e.offsetX, e.offsetY));
+      const p = this.mundo(e.offsetX, e.offsetY), t = this.hit(p);
       e.preventDefault();
-      if (!t) return;
+      if (!t) { const el = this.hitElemento(p); if (el && this.mestre && this.cb.onElementoContext) this.cb.onElementoContext(el.id, e.clientX, e.clientY); return; }
       if (this.cb.onTokenContext) this.cb.onTokenContext(t.id, e.clientX, e.clientY);
     });
     c.addEventListener('pointerdown', (e) => {
@@ -138,7 +140,8 @@ export class Mapa {
         else this.acao = { tipo: 'pan', sx: e.offsetX, sy: e.offsetY, vx: this.view.x, vy: this.view.y, clique: p }; // apagar/abrir: arrastar move o mapa, tocar age
       }
       else {
-        const t = this.hit(p);
+        const el = this.hitElemento(p), t = this.hit(p);
+        if (!t && el && this.mestre && this.ferr === 'mover') { this.acao = { tipo: 'elemento', id: el.id, dx: p.x - el.x, dy: p.y - el.y, mexeu: false }; return; }
         if (t) {
           this.selecionar(t.id);
           const agora = performance.now();
@@ -163,7 +166,8 @@ export class Mapa {
       else if (a.tipo === 'token') {
         const t = this.tokens.find((k) => k.id === a.id); const p = this.mundo(e.offsetX, e.offsetY);
         if (t) { t.x = Math.min(this.cena.w, Math.max(0, p.x - a.dx)); t.y = Math.min(this.cena.h, Math.max(0, p.y - a.dy)); a.mexeu = true; if (t.visao > 0) this.fogSujo = true; }
-      } else if (a.tipo === 'parede' && this.pw) this.pw.b = this.snapParede(this.mundo(e.offsetX, e.offsetY));
+      } else if (a.tipo === 'elemento') { const el = this.elementos.find((k) => k.id === a.id), p = this.mundo(e.offsetX, e.offsetY); if (el) { el.x = Math.min(this.cena.w, Math.max(0, p.x - a.dx)); el.y = Math.min(this.cena.h, Math.max(0, p.y - a.dy)); a.mexeu = true; } }
+      else if (a.tipo === 'parede' && this.pw) this.pw.b = this.snapParede(this.mundo(e.offsetX, e.offsetY));
       else if (a.tipo === 'regua') this.regua.b = this.mundo(e.offsetX, e.offsetY);
       else if (a.tipo === 'nevoa' && this.previa) {
         const p = this.mundo(e.offsetX, e.offsetY); this.previa.b = p;
@@ -177,7 +181,8 @@ export class Mapa {
       const a = this.acao;
       if (a && a.tipo === 'pinca') { if (this.ptrs.size < 2) this.acao = null; return; }
       if (!a) return;
-      if (a.tipo === 'token' && a.mexeu) {
+      if (a.tipo === 'elemento' && a.mexeu) { const el = this.elementos.find((k) => k.id === a.id); if (el && this.cb.onMoverElemento) this.cb.onMoverElemento(el.id, el.x, el.y); }
+      else if (a.tipo === 'token' && a.mexeu) {
         const t = this.tokens.find((k) => k.id === a.id);
         if (t) {
           const q = this.encaixa(t);
@@ -262,6 +267,16 @@ export class Mapa {
     if (!e) { e = { im: new Image(), ok: false }; e.im.onload = () => { e.ok = true; this.sujo = true; }; e.im.src = url; this.imgs.set(url, e); }
     return e.ok ? e.im : null;
   }
+  elementoImg(e) {
+    const url = this.cb.urlElemento ? this.cb.urlElemento(e) : null; if (!url) return null;
+    let z = this.imgs.get(url); if (!z) { z = { im: new Image(), ok: false }; z.im.onload = () => { z.ok = true; this.sujo = true; }; z.im.src = url; this.imgs.set(url, z); }
+    return z.ok ? z.im : null;
+  }
+  desenhaElementos() {
+    const g = this.g, k = 1 / this.view.s;
+    for (const e of this.elementos) { const im = this.elementoImg(e); if (!im) continue; g.globalAlpha = e.vis === false && this.mestre ? .45 : 1; g.drawImage(im, e.x - e.w / 2, e.y - e.h / 2, e.w, e.h); g.globalAlpha = 1; if (this.mestre) { g.font = `bold ${Math.max(11 * k, 13)}px system-ui,sans-serif`; g.textAlign = 'center'; g.textBaseline = 'top'; g.lineWidth = 3 * k; g.strokeStyle = 'rgba(0,0,0,.85)'; g.strokeText(e.nome || '', e.x, e.y + e.h / 2 + 3 * k); g.fillStyle = '#fff'; g.fillText(e.nome || '', e.x, e.y + e.h / 2 + 3 * k); } }
+    g.textAlign = 'start';
+  }
   desenha() {
     const g = this.g, { w, h, grade } = this.cena, v = this.view, d = this.dpr, k = 1 / v.s;
     g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = '#0b0a09'; g.fillRect(0, 0, this.c.width, this.c.height);
@@ -280,7 +295,7 @@ export class Mapa {
       const { f, pad, FW, FH } = this.fogInfo; g.globalAlpha = this.mestre ? 0.5 : 1;
       g.drawImage(this.fogB, 0, 0, FW, FH, -pad / f, -pad / f, FW / f, FH / f); g.globalAlpha = 1;
     };
-    if (this.mestre) { fog(); this.desenhaTokens(); this.desenhaParedes(); } else { this.desenhaParedes(); this.desenhaTokens(); fog(); }
+    if (this.mestre) { fog(); this.desenhaElementos(); this.desenhaTokens(); this.desenhaParedes(); } else { this.desenhaParedes(); this.desenhaElementos(); this.desenhaTokens(); fog(); }
     if (this.previa) this.desenhaPrevia();
     if (this.regua) {
       const { a, b } = this.regua, dist = Math.hypot(b.x - a.x, b.y - a.y) / grade.size;

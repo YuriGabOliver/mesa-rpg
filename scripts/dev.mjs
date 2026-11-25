@@ -10,8 +10,8 @@ const PORT = Number(process.env.PORT) || 3000;
 
 // ---------- Supabase falso, em memória (só o que o projeto usa: REST, Storage e Broadcast) ----------
 function supabaseFalso() {
-  const T = { mesas: [], cenas: [], tokens: [], jogadores: [], nevoa: [], rolagens: [] };
-  const ident = { nevoa: 0, rolagens: 0 }, arquivos = new Map(), ouvintes = new Map();
+  const T = { mesas: [], cenas: [], tokens: [], jogadores: [], nevoa: [], rolagens: [], chat: [] };
+  const ident = { nevoa: 0, rolagens: 0, chat: 0 }, arquivos = new Map(), ouvintes = new Map();
   const PK = { mesas: ['id'], cenas: ['mesa', 'id'], tokens: ['mesa', 'id'], jogadores: ['mesa', 'id'] };
   const RESERVADOS = ['select', 'order', 'limit', 'offset', 'on_conflict'];
   const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': '*' };

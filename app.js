@@ -1,5 +1,6 @@
 import { Mapa } from './mapa.js';
 import { criaMusica } from './musica.js';
+import { criaEfeitos } from './efeitos.js';
 import { Clima, TIPOS as TIPOS_CLIMA } from './clima.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -31,6 +32,7 @@ async function carregaConfig() {
 }
 const urlToken = (t) => (t && t.img ? `${CFG.url}/storage/v1/object/public/mapas/${E.m}/${t.img}` : null);
 const urlImagem = (img) => (img ? `${CFG.url}/storage/v1/object/public/mapas/${E.m}/${img}` : null);
+const urlElemento = (e) => (e && e.img ? `${CFG.url}/storage/v1/object/public/mapas/${E.m}/${e.img}` : null);
 
 /* ---------- Realtime (opcional): o servidor avisa quando algo muda; o polling vira só rede de segurança ---------- */
 function carregaScript(src) { return new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); }); }
@@ -76,7 +78,8 @@ const linkMestre = () => `${location.origin}/?m=${E.m}#k=${E.mk}`;
 
 /* ---------- música sincronizada (musica.js) ---------- */
 const musica = criaMusica({ toast, agir: (a, d) => agir(a, d), souMestre: () => souMestre(), onMudou: () => { atualizaSom(); if (E.aba === 'musica' && E.est) musica.atualiza(souMestre()); } });
-function atualizaSom() {
+const efeitos = criaEfeitos({ toast, agir: (a, d) => agir(a, d), souMestre: () => souMestre(), onMudou: () => { if (E.aba === 'efeitos') efeitos.atualiza(); } });
+function atualizaSomAntiga() {
   const b = $('#t-som'), s = musica.resumo();
   if (!b) return;
   b.hidden = !s.ativa;
@@ -84,6 +87,14 @@ function atualizaSom() {
   b.title = s.bloqueado ? 'O navegador bloqueou o som: toque para ativar' : 'Abrir a música da mesa';
 }
 $('#t-som').onclick = () => { if (musica.resumo().bloqueado) return musica.desbloquear(); E.aba = 'musica'; desenhaPainel(); alternaPainel(true); };
+function atualizaSom() {
+  const b = $('#t-som'), m = musica.resumo(), e = efeitos.resumo();
+  if (!b) return;
+  b.hidden = !m.ativa && !e.ativos;
+  b.textContent = m.bloqueado || e.bloqueado ? 'Ativar som' : e.ativos && !m.ativa ? 'Sons' : m.mudo ? 'Som desligado' : m.tocando ? 'Música' : 'Áudio';
+  b.title = m.bloqueado || e.bloqueado ? 'Toque para liberar o áudio neste navegador' : 'Abrir os controles de áudio';
+}
+$('#t-som').onclick = () => { const m = musica.resumo(), e = efeitos.resumo(); if (m.bloqueado) musica.desbloquear(); if (e.bloqueado) efeitos.desbloquear(); E.aba = e.ativos && !m.ativa ? 'efeitos' : 'musica'; desenhaPainel(); alternaPainel(true); };
 function recentes(atualiza) {
   let l = ls.get('ml.mesas', []);
   if (atualiza) { l = l.filter((x) => x.m !== atualiza.m); l.unshift({ ...atualiza, t: Date.now() }); l = l.slice(0, 8); ls.set('ml.mesas', l); }
@@ -136,7 +147,7 @@ async function abreMesa(m, mk) {
   $('#home').hidden = true; $('#mesa').hidden = false;
   history.replaceState(null, '', `/?m=${m}`);
   if (!mapa) iniciaMapa();
-  mapa.setImagem(null); mapa.setTokens([]); mapa.setNevoa([]); musica.estado(null); clima.define(null);
+  mapa.setImagem(null); mapa.setTokens([]); mapa.setElementos([]); mapa.setNevoa([]); musica.estado(null); efeitos.estado([]); clima.define(null);
   $('#painel').classList.toggle('fechado', !E.painel);
   try {
     await carregaConfig();
@@ -148,7 +159,7 @@ async function abreMesa(m, mk) {
   } catch (e) { sair(e.message); }
 }
 function sair(msg) {
-  clearTimeout(E.timer); fechaRealtime(); E.m = null; E.est = null; musica.estado(null); musica.fecha(); if (clima) clima.define(null);
+  clearTimeout(E.timer); fechaRealtime(); E.m = null; E.est = null; musica.estado(null); musica.fecha(); efeitos.estado([]); if (clima) clima.define(null);
   mostraHome(msg);
 }
 
@@ -156,10 +167,11 @@ function iniciaMapa() {
   mapa = new Mapa($('#cv'), {
     podeMover: (t) => t.dono === E.pid,
     onMover: (id, x, y) => { api('tokenMove', { id, x, y }).then(() => poll(true)).catch((e) => { toast(e.message); poll(true); }); },
+    onMoverElemento: (id, x, y) => { agir('elementoMove', { id, x, y }); },
     onNevoa: (op) => agir('nevoaAdd', { ops: [op] }),
     onParede: (o) => { if (o.op === 'add') agir('paredeAdd', { segs: o.segs }); else if (o.op === 'del') agir('paredeDel', { id: o.id }); else if (o.op === 'tipo') agir('paredeTipo', { id: o.id }); else if (o.op === 'alterna') agir('portaAlterna', { id: o.id }); else if (o.op === 'tranca') agir('portaTrancar', { id: o.id }); },
     aviso: (m) => toast(m),
-    urlToken,
+    urlToken, urlElemento,
     onSelecionar: (id) => { E.sel = id; marcaSel(); },
     onDuplo: () => { E.aba = 'tokens'; desenhaPainel(); if (!E.painel) alternaPainel(true); },
     onTokenContext: (id, x, y) => abrirMenuToken(id, x, y),
@@ -237,14 +249,16 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && E.
 
 function aplica(j) {
   const ant = E.est;
+  if (ant && Array.isArray(j.chat) && ls.get('ml.chat.tts', false) && 'speechSynthesis' in window) { const vistos = new Set((ant.chat || []).map((x) => x.id)); for (const msg of j.chat) if (!vistos.has(msg.id) && msg.pid !== E.pid) { const fala = new SpeechSynthesisUtterance(`${msg.nome}: ${msg.texto}`); fala.lang = 'pt-BR'; speechSynthesis.speak(fala); } }
   if(ant&&j.log&&j.log.length){const last=Math.max(0,...ant.log.map(x=>Number(x.t)||0));const nr=j.log.filter(x=>Number(x.t)>last).sort((a,b)=>a.t-b.t);if(nr.length)mostraRolagem(nr[nr.length-1]);}
   E.est = j; E.v = j.v; E.ultMud = Date.now();
   const chave = j.vendo || j.cenaId, antChave = ant && (ant.vendo || ant.cenaId);
   musica.estado(j.musica || null);
+  efeitos.estado(j.efeitos || [], j.agora);
   mapa.setMestre(j.papel === 'mestre');
   if (j.papel === 'mestre' && j.vendo !== E.vendo) { E.vendo = j.vendo; ls.set('ml.vendo.' + E.m, j.vendo); }
   if (!ant || ant.cena.img !== j.cena.img || antChave !== chave) mapa.setImagem(urlImagem(j.cena.img));
-  mapa.setCena(j.cena); mapa.setTokens(j.tokens); mapa.setNevoa(j.nevoa); clima.define(j.cena.clima || null);
+  mapa.setCena(j.cena); mapa.setElementos(j.elementos || []); mapa.setTokens(j.tokens); mapa.setNevoa(j.nevoa); clima.define(j.cena.clima || null);
   if (E.menuTk && !j.tokens.some((t) => t.id === E.menuTk)) fechaMenuToken();
   if (antChave && antChave !== chave) {
     E.sel = null; mapa.selecionar(null, false); mapa.centralizar();
@@ -289,6 +303,7 @@ $('#t-conv').onclick = () => { E.aba = 'mesa'; desenhaPainel(); alternaPainel(tr
 
 /* ---------- painel ---------- */
 function abas() { return [['dados', 'Dados'], ['tokens', 'Tokens'], ['musica', 'Música'], ...(souMestre() ? [['cenas', 'Cenas'], ['mapa', 'Mapa']] : []), ['mesa', 'Mesa']]; }
+abas = () => [['dados', 'Dados'], ['tokens', 'Tokens'], ['musica', 'Música'], ['efeitos', 'Sons'], ['iniciativa', 'Combate'], ['chat', 'Chat'], ...(souMestre() ? [['elementos', 'Elementos'], ['cenas', 'Cenas'], ['mapa', 'Mapa']] : []), ['mesa', 'Mesa']];
 function desenhaPainel() {
   if (!abas().some((a) => a[0] === E.aba)) E.aba = 'dados';
   musica.fecha();
@@ -309,6 +324,10 @@ function desenhaPainel() {
     </div><div class="sec"><h3>Tokens nesta cena</h3><ul id="lista-tk"></ul></div>
     <div class="sec"><h3>Biblioteca de tokens</h3><p class="dica">Tokens guardados ficam disponíveis para outras cenas. Os ativos em outras cenas podem ser duplicados para esta.</p><ul id="lista-biblioteca"></ul></div>`;
   else if (E.aba === 'musica') c.innerHTML = musica.html(souMestre());
+  else if (E.aba === 'efeitos') c.innerHTML = efeitos.html(souMestre());
+  else if (E.aba === 'iniciativa') c.innerHTML = `<div class="sec"><h3>Iniciativa do combate</h3><p class="dica">Marque os tokens na cena e informe os resultados. A lista fica em ordem decrescente.</p>${souMestre() ? `<div id="iniciativa-form"></div><div class="f-add"><button class="b prim" data-act="ini-salvar">Iniciar / atualizar</button></div>` : ''}<div id="iniciativa-atual"></div></div>`;
+  else if (E.aba === 'chat') c.innerHTML = `<div class="sec"><h3>Chat da mesa</h3><label class="linha"><input type="checkbox" id="chat-tts"> Ler mensagens recebidas em voz alta</label><div id="chat-lista" class="chat-lista" aria-live="polite"></div><form id="chat-form"><select id="chat-ident" aria-label="Enviar como"></select><textarea id="chat-texto" maxlength="600" rows="3" placeholder="Escreva uma mensagem…" required></textarea><button class="b prim">Enviar</button></form><p class="dica">Texto de voz usa a voz em português disponível no navegador.</p></div>`;
+  else if (E.aba === 'elementos') c.innerHTML = `<div class="sec"><h3>Adicionar elemento visual</h3><input id="el-nome" maxlength="40" placeholder="Nome (ex.: baú, árvore)"><label class="b" style="display:block;text-align:center">Escolher imagem<input type="file" id="el-arquivo" accept="image/*" hidden></label><span id="el-arq-nome" class="dica"></span><button class="b prim" data-act="el-add">Adicionar ao mapa</button><p class="dica">A imagem mantém sua proporção original. Arraste no mapa para posicionar.</p></div><div class="sec"><h3>Elementos nesta cena</h3><ul id="lista-elementos"></ul></div>`;
   else if (E.aba === 'cenas') c.innerHTML = `
     <div class="sec"><h3>Cenas</h3>
       <p class="dica">Os jogadores só veem a cena em que você os colocar com “Puxar jogadores”. Você pode abrir e preparar outras cenas sem que eles saibam.</p>
@@ -352,8 +371,9 @@ function desenhaPainel() {
     <button class="b" id="m-sair">Sair da mesa</button>`;
   atualizaPainel(true);
   if (E.aba === 'musica') musica.abre(souMestre());
+  if (E.aba === 'efeitos') efeitos.atualiza();
 }
-function podeEditar() { const f = document.activeElement; return !(f && f.closest && f.closest('#lista-tk') && /INPUT|SELECT/.test(f.tagName)); }
+function podeEditar() { const f = document.activeElement; return !(f && f.closest && f.closest('#lista-tk, #iniciativa-form, #chat-form') && /INPUT|SELECT|TEXTAREA/.test(f.tagName)); }
 function atualizaPainel(forca) {
   const j = E.est; if (!j) return;
   if (!forca && !podeEditar()) { E.adiaPainel = true; return; }
@@ -405,6 +425,19 @@ function atualizaPainel(forca) {
     def('#cl-tipo', cl.tipo || 'nenhum'); def('#cl-dir', cl.dir ?? 0); def('#cl-vento', cl.vento ?? 20); def('#cl-cob', cl.cob ?? 50); climaForm();
   } else if (E.aba === 'musica') {
     musica.atualiza(souMestre());
+  } else if (E.aba === 'iniciativa') {
+    const atual = j.iniciativa;
+    const form = $('#iniciativa-form');
+    if (form && souMestre()) { const rascunho = new Map([...form.querySelectorAll('[data-ini-id]')].map((x) => [x.dataset.iniId, { marcado: x.checked, valor: $(`[data-ini-valor="${CSS.escape(x.dataset.iniId)}"]`, form)?.value }])); form.innerHTML = j.tokens.map((t) => { const salvo = atual?.turnos?.find((x) => x.id === t.id), d = rascunho.get(t.id); return `<label class="ini-row"><input type="checkbox" data-ini-id="${esc(t.id)}" ${salvo || (!atual && (d ? d.marcado : true)) ? 'checked' : ''}><span>${esc(t.nome)}</span><input class="ini-val" type="number" data-ini-valor="${esc(t.id)}" value="${salvo?.valor ?? d?.valor ?? ''}" placeholder="Iniciativa" aria-label="Iniciativa de ${esc(t.nome)}"></label>`; }).join('') || '<p class="dica">Adicione tokens à cena para iniciar o combate.</p>'; }
+    const lista = $('#iniciativa-atual');
+    if (lista) lista.innerHTML = atual?.turnos?.length ? `<h3>Rodada ${Number(atual.rodada) || 1}</h3><ol class="ini-lista">${atual.turnos.map((t, i) => `<li class="${i === atual.ativo ? 'ini-ativo' : ''}"><b>${esc(t.nome)}</b><span>${Number(t.valor)}</span>${i === atual.ativo ? '<span class="tag verde">Agora</span>' : ''}</li>`).join('')}</ol>${souMestre() ? '<div class="f-add"><button class="b prim" data-act="ini-proximo">Próximo turno</button><button class="b" data-act="ini-limpar">Encerrar combate</button></div>' : ''}` : '<p class="dica">Nenhum combate ativo.</p>';
+  } else if (E.aba === 'chat') {
+    const ul = $('#chat-lista'), identidade = $('#chat-ident');
+    if (ul) { const perto = ul.scrollHeight - ul.scrollTop - ul.clientHeight < 50; ul.innerHTML = (j.chat || []).map((m) => `<article class="chat-msg ${m.pid === E.pid ? 'propria' : ''}"><b>${esc(m.nome)}</b><time>${new Date(m.t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</time><p>${esc(m.texto)}</p></article>`).join('') || '<p class="dica">Nenhuma mensagem ainda.</p>'; if (perto) ul.scrollTop = ul.scrollHeight; }
+    if (identidade) { const v = identidade.value, meus = j.tokens.filter((t) => souMestre() || t.dono === E.pid); identidade.innerHTML = '<option value="">' + esc(E.nome || 'Meu nome') + '</option>' + (souMestre() ? '<option value="__mestre">Falar como Mestre</option>' : '') + meus.map((t) => `<option value="${esc(t.id)}">${esc(t.nome)}</option>`).join(''); identidade.value = v; if (![...identidade.options].some((o) => o.value === v)) identidade.value = ''; }
+    const tts = $('#chat-tts'); if (tts && document.activeElement !== tts) tts.checked = !!ls.get('ml.chat.tts', false);
+  } else if (E.aba === 'elementos') {
+    const ul = $('#lista-elementos'); if (ul) ul.innerHTML = (j.elementos || []).map((x) => `<li data-el="${esc(x.id)}" data-id="${esc(x.id)}"><span class="thumb"><img src="${esc(urlElemento(x))}" alt=""></span><span class="lib-nome">${esc(x.nome)}</span><button class="b mini" data-act="el-vis">${x.vis === false ? 'Oculto' : 'Visível'}</button><button class="b mini" data-act="el-menos" aria-label="Diminuir tamanho">−</button><button class="b mini" data-act="el-mais" aria-label="Aumentar tamanho">+</button><button class="b mini" data-act="el-del">Remover</button></li>`).join('') || '<li class="dica">Nenhum elemento nesta cena.</li>';
   } else if (E.aba === 'mesa') {
     atualizaSync(); $('#m-clima').checked = !!ls.get('ml.clima', true);
     $('#jogs').innerHTML = j.jog.map((x) => `<li>${esc(x.nome)} ${x.mestre ? '<span class="tag">Mestre</span>' : ''} ${x.id === E.pid ? '<small>(você)</small>' : ''}</li>`).join('');
@@ -435,8 +468,11 @@ $('#conteudo').addEventListener('focusout', () => setTimeout(() => { if (E.adiaP
 $('#abas').addEventListener('click', (e) => { const b = e.target.closest('button[data-a]'); if (b) { E.aba = b.dataset.a; desenhaPainel(); } });
 const painel = $('#conteudo');
 painel.addEventListener('click', (e) => musica.clique(e));
+painel.addEventListener('click', (e) => efeitos.clique(e));
 painel.addEventListener('change', (e) => musica.muda(e));
+painel.addEventListener('change', (e) => efeitos.muda(e));
 painel.addEventListener('input', (e) => musica.entrada(e));
+painel.addEventListener('input', (e) => efeitos.muda(e));
 painel.addEventListener('click', async (e) => {
   const t = e.target.closest('button'); if (!t) return;
   if (t.dataset.d) return agir('rolar', { expr: t.dataset.d });
@@ -445,6 +481,14 @@ painel.addEventListener('click', async (e) => {
   if (t.id === 'b-pw-limpar') return confirm('Apagar todas as paredes e portas desta cena?') ? agir('paredeLimpar') : undefined;
   if (t.id === 'b-cobrir') return agir('nevoaCobrir');
   if (t.id === 'b-desfaz') return agir('nevoaDesfazer');
+  if (t.dataset.act === 'ini-salvar') {
+    const turnos = [...document.querySelectorAll('#iniciativa-form [data-ini-id]:checked')].map((x) => { const i = $(`[data-ini-valor="${CSS.escape(x.dataset.iniId)}"]`, $('#iniciativa-form')); return { id: x.dataset.iniId, valor: i?.value.trim() === '' ? null : Number(i.value) }; });
+    if (turnos.some((x) => x.valor === null || !Number.isFinite(x.valor))) return toast('Preencha a iniciativa de cada token selecionado.');
+    return agir('iniciativaSalvar', { turnos });
+  }
+  if (t.dataset.act === 'ini-proximo') return agir('iniciativaAvancar');
+  if (t.dataset.act === 'ini-limpar') return confirm('Encerrar este combate?') ? agir('iniciativaLimpar') : undefined;
+  if (t.dataset.act === 'el-add') { const f = $('#el-arquivo').files[0]; return enviaElemento(f, $('#el-nome').value.trim()); }
   if (t.id === 'cn-ok') {
     const r = await api('cenaNova', { nome: $('#cn-nome').value }).catch((er) => { toast(er.message); });
     if (r && r.id) { E.vendo = r.id; ls.set('ml.vendo.' + E.m, r.id); $('#cn-nome').value = ''; }
@@ -466,7 +510,12 @@ painel.addEventListener('click', async (e) => {
     return;
   }
   const li = t.closest('li[data-id]'); if (!li) return;
-  const id = li.dataset.id, tk = E.est.tokens.find((x) => x.id === id) || (E.est.biblioteca || []).find((x) => x.id === id);
+  const id = li.dataset.id, tk = E.est.tokens.find((x) => x.id === id) || (E.est.biblioteca || []).find((x) => x.id === id), elemento = (E.est.elementos || []).find((x) => x.id === id);
+  if (elemento) {
+    if (t.dataset.act === 'el-del') return confirm(`Remover “${elemento.nome}” desta cena?`) ? agir('elementoDel', { id }) : undefined;
+    if (t.dataset.act === 'el-vis') return agir('elementoEdit', { id, vis: elemento.vis === false });
+    if (t.dataset.act === 'el-mais' || t.dataset.act === 'el-menos') { const k = t.dataset.act === 'el-mais' ? 1.15 : 1 / 1.15; return agir('elementoEdit', { id, w: Math.round(elemento.w * k), h: Math.round(elemento.h * k) }); }
+  }
   if (t.dataset.act === 'menu') {
     const r = t.getBoundingClientRect(); return abrirMenuToken(id, r.right + 8, r.top, t);
   }
@@ -484,11 +533,14 @@ painel.addEventListener('click', async (e) => {
 painel.addEventListener('submit', (e) => {
   e.preventDefault();
   if (e.target.id === 'f-dado') { const v = $('#i-dado').value.trim(); if (v) { agir('rolar', { expr: v }); $('#i-dado').value = ''; } }
+  if (e.target.id === 'chat-form') { const texto = $('#chat-texto').value.trim(), identidade = $('#chat-ident').value; if (!texto) return; $('#chat-texto').value = ''; agir('chatEnviar', { texto, tokenId: identidade && identidade !== '__mestre' ? identidade : undefined, como: identidade === '__mestre' ? 'mestre' : 'jogador' }); }
 });
 painel.addEventListener('change', async (e) => {
   const el = e.target, li = el.closest('li[data-id]'), lc = el.closest('li[data-cid]');
   if (lc && el.classList.contains('cn')) return agir('cenaRenomear', { cenaId: lc.dataset.cid, nome: el.value });
   if (el.id === 'a-img') { $('#a-img-nome').textContent = el.files[0] ? el.files[0].name.slice(0, 18) : ''; return; }
+  if (el.id === 'el-arquivo') { $('#el-arq-nome').textContent = el.files[0]?.name || ''; return; }
+  if (el.id === 'chat-tts') { ls.set('ml.chat.tts', el.checked); if (!el.checked && 'speechSynthesis' in window) speechSynthesis.cancel(); return; }
   if (li) {
     const id = li.dataset.id;
     if (el.classList.contains('n')) agir('tokenEdit', { id, nome: el.value });
@@ -515,6 +567,18 @@ painel.addEventListener('input', (e) => {
 });
 
 /* ---------- imagem do token (recorte quadrado 256×256) ---------- */
+async function comprimirElemento(file) {
+  const bmp = await createImageBitmap(file), k = Math.min(1, 1200 / Math.max(bmp.width, bmp.height)), w = Math.max(1, Math.round(bmp.width * k)), h = Math.max(1, Math.round(bmp.height * k)), cv = document.createElement('canvas');
+  cv.width = w; cv.height = h; cv.getContext('2d').drawImage(bmp, 0, 0, w, h);
+  for (let q = .88; q >= .38; q -= .15) { let blob = await new Promise((r) => cv.toBlob(r, 'image/webp', q)); if (!blob || blob.type !== 'image/webp') blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', q)); if (blob && blob.size <= 850000) return { blob, razao: w / h }; }
+  throw new Error('Imagem muito grande; tente uma imagem menor.');
+}
+async function enviaElemento(file, nome) {
+  if (!file) return toast('Escolha uma imagem primeiro.');
+  try { const { blob, razao } = await comprimirElemento(file), dados = await new Promise((res, rej) => { const f = new FileReader(); f.onload = () => res(String(f.result).split(',')[1]); f.onerror = rej; f.readAsDataURL(blob); }), centro = mapa.centro(); await api('elementoAdd', { nome: nome || file.name.replace(/\.[^.]+$/, ''), dados, mime: blob.type, razao, h: E.est.cena.grade.size * 2, x: centro.x, y: centro.y }); $('#el-arquivo').value = ''; $('#el-nome').value = ''; $('#el-arq-nome').textContent = ''; poll(true); }
+  catch (e) { toast('Elemento: ' + e.message); }
+}
+
 async function comprimirToken(file) {
   const bmp = await createImageBitmap(file), lado = Math.min(bmp.width, bmp.height), cv = document.createElement('canvas');
   cv.width = cv.height = 256; cv.getContext('2d').drawImage(bmp, (bmp.width - lado) / 2, (bmp.height - lado) / 2, lado, lado, 0, 0, 256, 256);

@@ -14,6 +14,7 @@ create table if not exists public.mesas (
 );
 
 alter table public.mesas add column if not exists musica jsonb;  -- v0.4: faixa atual da música sincronizada
+alter table public.mesas add column if not exists efeitos jsonb not null default '[]'::jsonb;
 
 create table if not exists public.cenas (
   id    text not null,
@@ -55,6 +56,13 @@ create table if not exists public.rolagens (
 );
 create index if not exists rolagens_mesa_idx on public.rolagens (mesa, id);
 
+create table if not exists public.chat (
+  id bigint generated always as identity primary key,
+  mesa text not null references public.mesas(id) on delete cascade,
+  dados jsonb not null
+);
+create index if not exists chat_mesa_idx on public.chat (mesa, id);
+
 -- Segurança: RLS ligada e SEM políticas = ninguém acessa pelo navegador.
 -- Só o servidor (função do Vercel, com a chave secreta) lê e escreve.
 alter table public.mesas      enable row level security;
@@ -63,11 +71,13 @@ alter table public.tokens     enable row level security;
 alter table public.jogadores  enable row level security;
 alter table public.nevoa      enable row level security;
 alter table public.rolagens   enable row level security;
+alter table public.chat       enable row level security;
 
 -- Permissão: projetos novos do Supabase não liberam as tabelas para a API automaticamente.
 -- Só a chave secreta do servidor (service_role) recebe acesso; a chave pública continua sem nenhum.
 grant usage on schema public to service_role;
 grant all on public.mesas, public.cenas, public.tokens, public.jogadores, public.nevoa, public.rolagens to service_role;
+grant all on public.chat to service_role;
 grant all on all sequences in schema public to service_role;
 
 -- Bucket público para as imagens dos mapas (até 5 MB, só imagem).
