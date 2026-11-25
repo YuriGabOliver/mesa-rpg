@@ -7,6 +7,7 @@
 <title>Mesa Leve</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🗺️%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/hud.css">
 </head>
 <body>
 
@@ -38,24 +39,15 @@
 </section>
 
 <section id="mesa" class="tela" hidden>
-  <header id="topo">
-    <b id="t-nome"></b><span id="t-papel" class="tag"></span><span id="t-cena" class="tag cena" hidden></span><span id="t-off" class="tag aviso" hidden>sem conexão</span>
-    <span class="flex"></span>
-    <button class="b" id="t-som" hidden></button>
-    <button class="b" id="t-conv">Convidar</button>
-    <button class="b" id="t-painel">Painel</button>
-    <button class="b theme-toggle" id="t-tema" type="button" aria-label="Mudar tema"></button>
-  </header>
   <main id="area">
     <div id="palco">
       <canvas id="cv"></canvas>
       <canvas id="cv-clima" aria-hidden="true"></canvas>
-      <div id="tools">
-        <button class="b on" data-f="mover" title="Mover mapa e tokens">Mover</button>
-        <button class="b" data-f="regua" title="Medir distância">Régua</button>
-        <button class="b" data-f="nevoa" id="tool-nevoa" hidden title="Revelar área da névoa">Revelar</button>
-        <button class="b" data-f="parede" id="tool-parede" hidden title="Desenhar paredes e portas">Paredes</button>
-        <button class="b" id="tool-centro" title="Centralizar o mapa">Centralizar</button>
+      <div id="tools" role="toolbar" aria-label="Ferramentas do mapa">
+        <button class="b ferr on" data-f="mover" title="Mover mapa e tokens"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg><span>Mover</span></button>
+        <button class="b ferr" data-f="regua" title="Medir distância"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17 17 3l4 4L7 21z"/><path d="m7 13 2 2M10 10l2 2M13 7l2 2"/></svg><span>Régua</span></button>
+        <button class="b ferr" data-f="nevoa" id="tool-nevoa" hidden title="Revelar ou esconder a névoa"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 18h11a4 4 0 0 0 .6-7.95 5.5 5.5 0 0 0-10.7-1.3A4.7 4.7 0 0 0 6.5 18z"/></svg><span>Névoa</span></button>
+        <button class="b ferr" data-f="parede" id="tool-parede" hidden title="Desenhar paredes e portas"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v14H3zM3 12h18M9 5v7M15 12v7"/></svg><span>Paredes</span></button>
       </div>
       <div id="tools-parede" hidden>
         <button class="b on" data-pm="parede">Parede</button><button class="b" data-pm="porta">Porta</button><button class="b" data-pm="abrir" title="Clique para abrir/fechar; clique duplo para trancar/destrancar">Abrir/fechar</button><button class="b" data-pm="apagar">Apagar</button><span class="sep"></span><span id="p-dica" class="dica">Desenho livre; clique duplo numa porta para trancar/destrancar.</span>
@@ -67,7 +59,19 @@
         <label class="raio">Pincel <input type="range" id="n-raio" min="10" max="200" value="40"></label>
         <button class="b" id="n-desfaz">Desfazer</button>
       </div>
+      <div id="hud-id">
+        <div class="id-pill">
+          <div class="id-txt"><b id="t-nome"></b><span class="id-sub"><span id="t-papel" class="tag"></span><span id="t-cena" class="tag cena" hidden></span><span id="t-off" class="tag aviso" hidden>sem conexão</span></span></div>
+          <button class="b prim mini" id="t-conv" title="Convidar jogadores">Convidar</button>
+        </div>
+        <button class="b" id="t-som" hidden></button>
+      </div>
       <div id="faixa" hidden><span id="faixa-txt"></span><button class="b prim mini" id="faixa-puxar">Puxar jogadores para cá</button></div>
+    <div id="zoom" role="group" aria-label="Zoom">
+        <button class="b" id="z-mais" title="Aproximar" aria-label="Aproximar"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button class="b" id="z-menos" title="Afastar" aria-label="Afastar"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+        <button class="b" id="tool-centro" title="Centralizar o mapa" aria-label="Centralizar o mapa"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/></svg></button>
+      </div>
     </div>
     <section id="token-menu" class="token-menu" role="dialog" aria-labelledby="tm-titulo" hidden>
       <div class="tm-topo"><b id="tm-titulo"></b><button class="b mini" id="tm-fechar" aria-label="Fechar ações do token">Fechar</button></div>
@@ -78,8 +82,10 @@
       </div>
       <button class="b" id="tm-guardar">Remover do mapa e guardar na biblioteca</button>
     </section>
-    <aside id="painel">
-      <nav id="abas"></nav>
+    <nav id="rail" aria-label="Seções da mesa"></nav>
+    <aside id="painel" class="fechado" aria-label="Painel da mesa">
+      <header id="painel-topo"><b id="painel-titulo"></b><button class="b mini" id="painel-fechar" aria-label="Fechar painel"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></header>
+      <nav id="abas" aria-label="Subseções"></nav>
       <div id="conteudo"></div>
     </aside>
   </main>

@@ -12,7 +12,7 @@ const ls = {
 const temaInit=ls.get('ml.tema','escuro')==='claro'?'claro':'escuro';document.documentElement.dataset.tema=temaInit;
 function sincronizaTema(){const cl=document.documentElement.dataset.tema==='claro';['#h-tema','#t-tema'].forEach(q=>{const b=$(q);if(b){b.textContent=cl?'Escuro':'Claro';b.title=cl?'Ativar tema escuro':'Ativar tema claro';b.setAttribute('aria-label',b.title);}});const m=$('meta[name=theme-color]');if(m)m.content=cl?'#f1efe8':'#0f172a';}
 function alternaTema(){document.documentElement.dataset.tema=document.documentElement.dataset.tema==='claro'?'escuro':'claro';ls.set('ml.tema',document.documentElement.dataset.tema);sincronizaTema();}
-['#h-tema','#t-tema'].forEach(q=>$(q).addEventListener('click',alternaTema));sincronizaTema();
+document.addEventListener('click',(e)=>{if(e.target.closest('#h-tema,#t-tema'))alternaTema();});sincronizaTema();
 const AL = 'abcdefghjkmnpqrstuvwxyz23456789';
 const novoId = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => AL[b % AL.length]).join('');
 const POLL_ATIVO = 1500, POLL_PARADO = 3500, POLL_ESCONDIDO = 8000, JANELA_ATIVA = 20000; // ms
@@ -20,7 +20,7 @@ const SB_VERSOES = ['2.45.4', '2.39.7']; // supabase-js (UMD) no jsDelivr; tenta
 const CORES = ['#c0392b', '#2e86c1', '#27ae60', '#d4ac0d', '#8e44ad', '#e67e22', '#16a085', '#7f8c8d'];
 
 const E = { m: null, mk: '', pid: ls.get('ml.pid', null) || novoId(16), nome: ls.get('ml.nome', ''), v: 0, est: null, pend: 0,
-  vendo: '', polling: false, again: false, timer: null, falhas: 0, aba: 'dados', sel: null, adiaPainel: false, painel: innerWidth >= 800, menuTk: null, menuOrigin: null };
+  vendo: '', polling: false, again: false, timer: null, falhas: 0, aba: 'dados', sel: null, adiaPainel: false, painel: false, tkAberto: new Set(), chatVisto: null, menuTk: null, menuOrigin: null };
 ls.set('ml.pid', E.pid);
 window.__E = E; // depuração
 let mapa = null, CFG = null, clima = null;
@@ -318,7 +318,7 @@ function aplica(j) {
   const tc = $('#t-cena'); tc.hidden = j.papel !== 'mestre'; if (!tc.hidden) tc.textContent = j.cenaNome;
   $('#tool-nevoa').hidden = j.papel !== 'mestre'; $('#tool-parede').hidden = j.papel !== 'mestre';
   atualizaFaixa();
-  if (!ant || ant.papel !== j.papel) desenhaPainel(); else atualizaPainel();
+  if (!ant || ant.papel !== j.papel) desenhaPainel(); else { atualizaPainel(); sincronizaHud(); }
 }
 function atualizaFaixa() {
   const j = E.est, f = $('#faixa'), longe = !!j && j.papel === 'mestre' && j.vendo !== j.ativa;
@@ -330,7 +330,7 @@ $('#faixa-puxar').onclick = () => agir('cenaPuxar', { cenaId: E.est.vendo });
 /* ---------- barra de ferramentas ---------- */
 $('#tools').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
-  if (b.id === 'tool-centro') return mapa.centralizar();
+  if (!b.dataset.f) return;
   mapa.setFerramenta(b.dataset.f);
   document.querySelectorAll('#tools [data-f]').forEach((x) => x.classList.toggle('on', x === b));
   mapa.c.style.cursor = b.dataset.f === 'mover' ? 'grab' : 'crosshair';
@@ -345,17 +345,69 @@ $('#tools-nevoa').addEventListener('click', (e) => {
   mapa.setNevoaFerr(b.dataset.na ? { acao: b.dataset.na } : { modo: b.dataset.nm });
 });
 $('#n-raio').addEventListener('input', (e) => mapa.setNevoaFerr({ raio: +e.target.value }));
-function alternaPainel(forca) { E.painel = forca === undefined ? !E.painel : forca; $('#painel').classList.toggle('fechado', !E.painel); }
-$('#t-painel').onclick = () => alternaPainel();
+function alternaPainel(forca) { E.painel = forca === undefined ? !E.painel : forca; $('#painel').classList.toggle('fechado', !E.painel); sincronizaHud(); }
+$('#painel-fechar').onclick = () => alternaPainel(false);
 $('#t-conv').onclick = () => { E.aba = 'mesa'; desenhaPainel(); alternaPainel(true); };
+$('#z-mais').onclick = () => mapa.zoomEm(mapa.c.clientWidth / 2, mapa.c.clientHeight / 2, 1.25);
+$('#z-menos').onclick = () => mapa.zoomEm(mapa.c.clientWidth / 2, mapa.c.clientHeight / 2, 1 / 1.25);
+$('#tool-centro').onclick = () => mapa.centralizar();
+
+/* ---------- menu lateral (ícones com nome) ---------- */
+const ICONES = {
+  dados: '<path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.5 7 12 12l8.5-5M12 12v9.5"/>',
+  tokens: '<circle cx="12" cy="7.5" r="3.3"/><path d="M6.5 20c0-3.6 2.2-6 5.5-6s5.5 2.4 5.5 6zM5.5 20h13"/>',
+  chat: '<path d="M4 5h16v11H10l-5 4v-4H4z"/>',
+  combate: '<path d="M4 4l11 11M20 4 9 15M14 17l3 3M10 17l-3 3M3 3l3.2.8-.8 3.2M21 3l-3.2.8.8 3.2"/>',
+  audio: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
+  cena: '<path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2zM9 4v14M15 6v14"/>',
+  mesa: '<circle cx="9" cy="8" r="3"/><path d="M3.5 19c0-3.4 2.4-5.6 5.5-5.6s5.5 2.2 5.5 5.6M16.5 11a2.5 2.5 0 1 0 0-5M17 13.6c2.2.4 3.5 2.2 3.5 5.4"/>',
+};
+// cada botão do menu abre um grupo; grupos com mais de uma aba mostram abas pequenas dentro do painel
+const GRUPOS = [
+  { g: 'dados', nome: 'Dados', abas: [['dados', 'Dados']] },
+  { g: 'tokens', nome: 'Tokens', abas: [['tokens', 'Tokens']] },
+  { g: 'chat', nome: 'Chat', abas: [['chat', 'Chat']] },
+  { g: 'combate', nome: 'Combate', abas: [['iniciativa', 'Combate']] },
+  { g: 'audio', nome: 'Áudio', abas: [['musica', 'Música'], ['efeitos', 'Sons']] },
+  { g: 'cena', nome: 'Cena', mestre: true, abas: [['cenas', 'Cenas'], ['mapa', 'Mapa'], ['elementos', 'Elementos']] },
+  { g: 'mesa', nome: 'Mesa', abas: [['mesa', 'Mesa']] },
+];
+const gruposVisiveis = () => GRUPOS.filter((x) => !x.mestre || souMestre());
+const grupoDe = (aba) => gruposVisiveis().find((x) => x.abas.some((a) => a[0] === aba));
+function sincronizaHud() {
+  const j = E.est, rail = $('#rail'); if (!j) return;
+  const atual = E.painel ? grupoDe(E.aba) : null;
+  const ult = Math.max(0, ...(j.chat || []).map((m) => Number(m.id) || 0));
+  if (E.chatVisto === null) E.chatVisto = ult;
+  if (E.painel && E.aba === 'chat') E.chatVisto = ult;
+  const novas = (j.chat || []).filter((m) => Number(m.id) > E.chatVisto && m.pid !== E.pid).length;
+  const combate = !!(j.iniciativa && j.iniciativa.turnos && j.iniciativa.turnos.length);
+  const html = gruposVisiveis().map((x) => {
+    const marca = x.g === 'chat' && novas ? `<i class="bolha">${novas > 9 ? '9+' : novas}</i>` : x.g === 'combate' && combate ? '<i class="ponto"></i>' : '';
+    return `<button class="b rb ${atual && atual.g === x.g ? 'on' : ''}" data-g="${x.g}" title="${x.nome}" aria-pressed="${!!(atual && atual.g === x.g)}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONES[x.g]}</svg><span>${x.nome}</span>${marca}</button>`;
+  }).join('');
+  if (html !== E.railHtml) { E.railHtml = html; rail.innerHTML = html; } // só mexe no DOM se algo mudou
+  $('#mesa').classList.toggle('painel-aberto', !!E.painel);
+}
+$('#rail').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-g]'); if (!b) return;
+  const g = gruposVisiveis().find((x) => x.g === b.dataset.g); if (!g) return;
+  if (E.painel && grupoDe(E.aba) === g) return alternaPainel(false); // clicar de novo fecha
+  E.ultAba = E.ultAba || {};
+  E.aba = (E.ultAba[g.g] && g.abas.some((a) => a[0] === E.ultAba[g.g])) ? E.ultAba[g.g] : g.abas[0][0];
+  desenhaPainel(); alternaPainel(true);
+});
+window.__abre = (aba) => { E.aba = aba; desenhaPainel(); alternaPainel(true); }; // depuração e testes
 
 /* ---------- painel ---------- */
-function abas() { return [['dados', 'Dados'], ['tokens', 'Tokens'], ['musica', 'Música'], ...(souMestre() ? [['cenas', 'Cenas'], ['mapa', 'Mapa']] : []), ['mesa', 'Mesa']]; }
-abas = () => [['dados', 'Dados'], ['tokens', 'Tokens'], ['musica', 'Música'], ['efeitos', 'Sons'], ['iniciativa', 'Combate'], ['chat', 'Chat'], ...(souMestre() ? [['elementos', 'Elementos'], ['cenas', 'Cenas'], ['mapa', 'Mapa']] : []), ['mesa', 'Mesa']];
+const abas = () => gruposVisiveis().flatMap((x) => x.abas);
 function desenhaPainel() {
   if (!abas().some((a) => a[0] === E.aba)) E.aba = 'dados';
   musica.fecha();
-  $('#abas').innerHTML = abas().map(([k, n]) => `<button data-a="${k}" class="${k === E.aba ? 'on' : ''}">${n}</button>`).join('');
+  const grp = grupoDe(E.aba); E.ultAba = E.ultAba || {}; E.ultAba[grp.g] = E.aba;
+  $('#painel-titulo').textContent = grp.nome;
+  $('#abas').hidden = grp.abas.length < 2;
+  $('#abas').innerHTML = grp.abas.map(([k, n]) => `<button data-a="${k}" class="${k === E.aba ? 'on' : ''}">${n}</button>`).join('');
   const c = $('#conteudo');
   if (E.aba === 'dados') c.innerHTML = `
     <div class="sec"><h3>Rolar dados</h3>
@@ -363,13 +415,13 @@ function desenhaPainel() {
       <form id="f-dado"><input id="i-dado" placeholder="Ex.: 2d6+3" autocomplete="off" maxlength="40"><button class="b prim" style="margin:0">Rolar</button></form>
     </div><div class="sec"><h3>Histórico</h3><ul id="log"></ul></div>`;
   else if (E.aba === 'tokens') c.innerHTML = `
-    <div class="sec"><h3>Novo token</h3>
+    <details class="sec novo" id="novo-tk" ${E.novoTk ? 'open' : ''}><summary>＋ Novo token</summary>
       <div class="f-add"><input type="color" id="a-cor" value="${CORES[(E.est ? E.est.tokens.length : 0) % CORES.length]}"><input class="n" id="a-nome" maxlength="12" placeholder="Nome">
         <select id="a-tam"><option value="1">1×1</option><option value="2">2×2</option><option value="3">3×3</option></select>
         <label class="b mini" style="margin:0;display:inline-flex;align-items:center">Imagem<input type="file" id="a-img" accept="image/*" hidden></label><span id="a-img-nome" class="dica" style="margin:0"></span>
         ${souMestre() ? '<select id="a-dono"></select><label class="linha"><input type="checkbox" id="a-vis"> Visível para jogadores</label>' : ''}<button class="b prim" id="a-ok">Adicionar</button></div>
       <p class="dica">Aparece no centro da sua tela. Arraste para posicionar. Para trocar a imagem de um token, toque na bolinha dele na lista abaixo.</p>
-    </div><div class="sec"><h3>Tokens nesta cena</h3><ul id="lista-tk"></ul></div>
+    </details><div class="sec"><h3>Tokens nesta cena</h3><ul id="lista-tk"></ul></div>
     <div class="sec"><h3>Biblioteca de tokens</h3><p class="dica">Tokens guardados ficam disponíveis para outras cenas. Os ativos em outras cenas podem ser duplicados para esta.</p><ul id="lista-biblioteca"></ul></div>`;
   else if (E.aba === 'musica') c.innerHTML = musica.html(souMestre());
   else if (E.aba === 'efeitos') c.innerHTML = efeitos.html(souMestre());
@@ -414,11 +466,12 @@ function desenhaPainel() {
       <div class="aviso-box">Guarde este link: ele dá controle total da mesa e é a única forma de voltar como mestre em outro aparelho. Não envie para jogadores.</div>` : ''}
     </div><div class="sec"><h3>Neste aparelho</h3>
       <label class="linha"><input type="checkbox" id="m-clima"> Mostrar efeitos de clima</label>
+      <button class="b theme-toggle" id="t-tema" type="button" style="margin-top:8px"></button>
       <p class="dica">Desligue se a mesa ficar pesada no seu celular. Só afeta você.</p>
     </div><div class="sec"><h3>Na mesa agora</h3><ul id="jogs"></ul><p class="dica" id="m-sync"></p></div>
     ${souMestre() ? '<div class="sec zona-perigo"><h3>Zona de perigo</h3><p class="dica">Exclui a mesa inteira e libera o espaço das imagens.</p><button class="b perigo" id="m-excluir">Excluir esta mesa</button></div>' : ''}
     <button class="b" id="m-sair">Sair da mesa</button>`;
-  atualizaPainel(true);
+  atualizaPainel(true); sincronizaHud(); sincronizaTema();
   if (E.aba === 'musica') musica.abre(souMestre());
   if (E.aba === 'efeitos') efeitos.atualiza();
 }
@@ -435,18 +488,25 @@ function atualizaPainel(forca) {
     $('#lista-tk').innerHTML = j.tokens.map((t) => {
       const meu = souMestre() || t.dono === E.pid, nomeDono = t.dono ? (j.jog.find((x) => x.id === t.dono) || {}).nome || '?' : 'Mestre';
       const u = urlToken(t), mini = u ? `<img src="${esc(u)}" alt="">` : `<span class="dot" style="background:${esc(t.cor)}"></span>`;
-      return `<li data-id="${esc(t.id)}" class="${E.sel === t.id ? 'sel' : ''}">
-        ${meu ? `<label class="thumb" title="Trocar a imagem do token">${mini}<input type="file" class="timg" accept="image/*" hidden></label>
-          <input class="n" maxlength="12" value="${esc(t.nome)}">
-          <input type="color" class="c" value="${esc(t.cor)}" title="Cor da borda">
-          <select class="tam">${[1, 2, 3, 4].map((n) => `<option ${n === t.tam ? 'selected' : ''} value="${n}">${n}×${n}</option>`).join('')}</select>`
-        : `<span class="thumb">${mini}</span><span class="ro">${esc(t.nome)}</span>`}
-        ${souMestre() ? `<select class="dono"><option value="">Mestre</option>${j.jog.filter((x) => !x.mestre).map((x) => `<option value="${esc(x.id)}" ${x.id === t.dono ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}</select>
-          <select class="visao" title="Revela a névoa em volta do token">${[[0, "Sem luz"], [1, "Luz 1"], [2, "Luz 2"], [3, "Luz 3"], [4, "Luz 4"], [5, "Luz 5"], [6, "Luz 6"], [7, "Luz 7"], [8, "Luz 8"], [9, "Luz 9"], [10, "Luz 10"], [11, "Luz 11"], [12, "Luz 12"], [13, "Luz 13"], [14, "Luz 14"], [15, "Luz 15"], [16, "Luz 16"], [17, "Luz 17"], [18, "Luz 18"], [19, "Luz 19"], [20, "Luz 20"]].map(([n, r]) => `<option value="${n}" ${(t.visao || 0) === n ? 'selected' : ''}>${r}</option>`).join('')}</select>
-          <button class="b mini" data-act="vis" title="Mostrar/ocultar para jogadores">${t.vis === false ? 'Oculto' : 'Visível'}</button>${!t.dono ? `<button class="b mini ${t.bloqueiaPortas === false ? '' : 'on'}" data-act="portas" title="Alternar bloqueio por portas neste NPC">Portas: ${t.bloqueiaPortas === false ? 'ignora portas' : 'bloqueiam'}</button>` : ''}` : `<small>${esc(nomeDono)}</small>`}
-        <button class="b mini" data-act="ir" title="Ir até o token">Ir</button>
-        ${meu && t.img ? '<button class="b mini" data-act="rmimg" title="Tirar a imagem">Sem img</button>' : ''}
-        ${meu ? '<button class="b mini" data-act="menu" title="Ações do token">Ações</button>' : ''}</li>`;
+      const luzes = Array.from({ length: 21 }, (_, n) => `<option value="${n}" ${(t.visao || 0) === n ? 'selected' : ''}>${n ? 'Luz ' + n : 'Sem luz'}</option>`).join('');
+      const donos = souMestre() ? `<option value="">Mestre</option>${j.jog.filter((x) => !x.mestre).map((x) => `<option value="${esc(x.id)}" ${x.id === t.dono ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}` : '';
+      return `<li data-id="${esc(t.id)}" class="${E.sel === t.id ? 'sel' : ''} ${E.tkAberto.has(t.id) ? 'aberto' : ''}">
+        <div class="tk-linha">
+          ${meu ? `<label class="thumb" title="Trocar a imagem do token">${mini}<input type="file" class="timg" accept="image/*" hidden></label><input class="n" maxlength="12" value="${esc(t.nome)}">`
+          : `<span class="thumb">${mini}</span><span class="ro">${esc(t.nome)}</span><small>${esc(nomeDono)}</small>`}
+          ${souMestre() ? `<button class="b mini" data-act="vis" title="Mostrar/ocultar para jogadores">${t.vis === false ? 'Oculto' : 'Visível'}</button>` : ''}
+          <button class="b mini" data-act="ir" title="Ir até o token">Ir</button>
+          ${meu ? '<button class="b mini" data-act="mais" title="Mais ajustes do token" aria-label="Mais ajustes">⋯</button>' : ''}
+        </div>
+        ${meu ? `<div class="tk-mais">
+          <label>Cor <input type="color" class="c" value="${esc(t.cor)}" title="Cor da borda"></label>
+          <label>Tamanho <select class="tam">${[1, 2, 3, 4].map((n) => `<option ${n === t.tam ? 'selected' : ''} value="${n}">${n}×${n}</option>`).join('')}</select></label>
+          ${souMestre() ? `<label>Dono <select class="dono">${donos}</select></label>
+          <label>Luz <select class="visao" title="Revela a névoa em volta do token">${luzes}</select></label>
+          ${!t.dono ? `<button class="b mini ${t.bloqueiaPortas === false ? '' : 'on'}" data-act="portas" title="Alternar bloqueio por portas neste NPC">Portas: ${t.bloqueiaPortas === false ? 'ignora portas' : 'bloqueiam'}</button>` : ''}` : ''}
+          ${t.img ? '<button class="b mini" data-act="rmimg" title="Tirar a imagem">Sem img</button>' : ''}
+          <button class="b mini" data-act="menu" title="Duplicar ou guardar">Ações</button>
+        </div>` : ''}</li>`;
     }).join('') || '<li class="dica">Nenhum token nesta cena.</li>';
     const cenaAtual = j.vendo || j.cenaId;
     const nomeCena = (id) => (j.cenas || []).find((x) => x.id === id)?.nome || 'Outra cena';
@@ -510,6 +570,7 @@ function detalhe(d) {
     return (i || p.s < 0 ? ' ' : '') + sinal + (sinal ? ' ' : '') + corpo;
   }).join('').trim();
 }
+document.addEventListener('toggle', (e) => { if (e.target && e.target.id === 'novo-tk') E.novoTk = e.target.open; }, true);
 function marcaSel() { document.querySelectorAll('#lista-tk li').forEach((li) => li.classList.toggle('sel', li.dataset.id === E.sel)); }
 $('#conteudo').addEventListener('focusout', () => setTimeout(() => { if (E.adiaPainel) atualizaPainel(); }, 50));
 
@@ -568,6 +629,7 @@ painel.addEventListener('click', async (e) => {
     if (t.dataset.act === 'el-vis') return agir('elementoEdit', { id, vis: elemento.vis === false });
     if (t.dataset.act === 'el-mais' || t.dataset.act === 'el-menos') { const k = t.dataset.act === 'el-mais' ? 1.15 : 1 / 1.15; return agir('elementoEdit', { id, w: Math.round(elemento.w * k), h: Math.round(elemento.h * k) }); }
   }
+  if (t.dataset.act === 'mais') { li.classList.toggle('aberto'); if (li.classList.contains('aberto')) E.tkAberto.add(id); else E.tkAberto.delete(id); return; }
   if (t.dataset.act === 'menu') {
     const r = t.getBoundingClientRect(); return abrirMenuToken(id, r.right + 8, r.top, t);
   }

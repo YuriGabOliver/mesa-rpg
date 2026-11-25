@@ -1,0 +1,107 @@
+/* Mesa Leve: nova HUD (v0.9).
+   Ideia: o mapa ocupa a tela toda e as coisas flutuam por cima, cada uma no seu canto.
+   - canto de cima à esquerda: quem sou eu / qual mesa / convidar
+   - lateral direita: menu de seções (ícone + nome). O painel só abre quando você pede
+   - embaixo no centro: ferramentas do mapa (dock)
+   - embaixo à esquerda: zoom
+   Carregado depois do style.css; usa as mesmas variáveis de cor (tema claro e escuro). */
+
+.ic{width:22px;height:22px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+#mesa{position:relative}
+#area{position:relative;flex:1;min-height:0;display:block}
+#palco{position:absolute;inset:0}
+
+/* superfície flutuante comum */
+#hud-id .id-pill,#rail,#tools,#tools-parede,#tools-nevoa,#zoom,#faixa,#mesa #painel{
+  background:var(--float);border:1px solid var(--line);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);box-shadow:0 8px 26px #0005}
+
+/* ---------- canto: identidade ---------- */
+#hud-id{position:absolute;left:12px;top:calc(12px + env(safe-area-inset-top,0px));z-index:4;display:flex;flex-direction:column;align-items:flex-start;gap:8px;max-width:calc(100% - 92px)}
+.id-pill{display:flex;align-items:center;gap:10px;padding:7px 8px 7px 14px;border-radius:16px;max-width:100%}
+.id-txt{display:flex;flex-direction:column;gap:3px;min-width:0}
+#t-nome{font-size:15px;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.id-sub{display:flex;gap:4px;flex-wrap:wrap}
+.id-sub .tag{font-size:11px;padding:1px 7px}
+#t-conv{white-space:nowrap}
+#t-som{padding:6px 12px;border-radius:99px;background:var(--float);box-shadow:0 6px 18px #0004}
+
+/* ---------- menu lateral ---------- */
+#rail{position:absolute;top:calc(12px + env(safe-area-inset-top,0px));right:10px;z-index:6;display:flex;flex-direction:column;gap:3px;padding:6px;border-radius:20px;max-height:calc(100% - 24px);overflow-y:auto;scrollbar-width:none}
+#rail::-webkit-scrollbar{display:none}
+.rb{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;width:58px;min-height:54px;padding:6px 2px;border:0;border-radius:14px;background:transparent;color:var(--mut);font-size:11px;line-height:1.1}
+.rb:hover{background:color-mix(in srgb,var(--acc) 14%,transparent);color:var(--ink);transform:none}
+.rb.on{background:var(--acc);color:#1a1209;font-weight:600}
+.rb .bolha{position:absolute;top:2px;right:7px;min-width:17px;height:17px;padding:0 4px;border-radius:99px;background:var(--bad);color:#fff;font:700 10px/17px system-ui;text-align:center;font-style:normal}
+.rb .ponto{position:absolute;top:6px;right:13px;width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 2px var(--float)}
+
+/* ---------- painel que abre ao lado do menu ---------- */
+#mesa #painel{position:absolute;top:calc(12px + env(safe-area-inset-top,0px));right:80px;bottom:auto;left:auto;width:min(370px,calc(100vw - 96px));height:auto;max-height:calc(100% - 24px);display:flex;flex-direction:column;border-radius:20px;border-left:1px solid var(--line);border-top:1px solid var(--line);z-index:5;overflow:hidden}
+#mesa #painel.fechado{display:none}
+#painel-topo{display:flex;align-items:center;justify-content:space-between;padding:12px 12px 6px 16px}
+#painel-titulo{font-size:17px}
+#painel-fechar{min-height:34px;padding:4px 8px}
+#painel-fechar .ic{width:18px;height:18px}
+#mesa #abas{display:flex;gap:4px;padding:2px 12px 10px;border-bottom:1px solid var(--line);overflow-x:auto}
+#mesa #abas button{flex:1 0 auto;min-width:0;padding:6px 14px;border:0;border-radius:99px;background:transparent;color:var(--mut);font-size:13px}
+#mesa #abas button.on{background:color-mix(in srgb,var(--acc) 24%,transparent);color:var(--ink);font-weight:600}
+#mesa #conteudo{flex:1;min-height:0;overflow:auto;padding:14px 16px 18px}
+
+/* ---------- dock de ferramentas ---------- */
+#tools{position:absolute;left:50%;top:auto;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);display:flex;gap:4px;padding:6px;border-radius:22px;z-index:4}
+.ferr{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:66px;min-height:56px;padding:6px 8px;border:0;border-radius:16px;background:transparent;color:var(--mut);font-size:11px}
+.ferr:hover{background:color-mix(in srgb,var(--acc) 14%,transparent);color:var(--ink);transform:none}
+.ferr.on{background:var(--acc);color:#1a1209;font-weight:600}
+:root[data-tema="claro"] .ferr.on,:root[data-tema="claro"] .rb.on{color:#fff}
+
+/* opções da ferramenta escolhida: aparecem logo acima do dock */
+#tools-parede,#tools-nevoa{position:absolute;left:50%;top:auto;bottom:calc(92px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:center;padding:8px;border-radius:18px;max-width:min(94%,660px);z-index:4}
+#tools-parede .b,#tools-nevoa .b{min-height:34px;padding:5px 12px;font-size:13px;border-radius:99px}
+#tools-parede .b.on,#tools-nevoa .b.on{background:var(--acc);color:#1a1209;border-color:var(--acc)}
+#tools-parede .sep,#tools-nevoa .sep{width:1px;height:22px;background:var(--line)}
+#tools-parede #p-dica{flex-basis:100%;text-align:center;margin:0;font-size:12px}
+#tools-nevoa .raio{margin:0;font-size:12px}
+
+/* ---------- zoom ---------- */
+#zoom{position:absolute;left:12px;bottom:calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:2px;padding:5px;border-radius:16px;z-index:4}
+#zoom .b{width:40px;min-height:40px;padding:0;display:flex;align-items:center;justify-content:center;border:0;border-radius:12px;color:var(--ink)}
+#zoom .ic{width:20px;height:20px}
+
+/* aviso "você está em outra cena" */
+#faixa{position:absolute;left:50%;top:calc(12px + env(safe-area-inset-top,0px));bottom:auto;transform:translateX(-50%);z-index:4;border-radius:16px;max-width:min(560px,calc(100% - 520px));background:var(--warn);border-color:var(--acc)}
+#toast{bottom:calc(104px + env(safe-area-inset-bottom,0px))}
+
+/* ---------- lista de tokens: uma linha limpa; o resto fica em "⋯" ---------- */
+#mesa #lista-tk li{display:block;padding:8px}
+.tk-linha{display:flex;align-items:center;gap:6px}
+.tk-linha .n,.tk-linha .ro{flex:1 1 0;min-width:0}
+.tk-linha small{color:var(--mut);white-space:nowrap}
+.tk-mais{display:none;grid-template-columns:1fr 1fr;gap:8px 10px;align-items:end;margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}
+#lista-tk li.aberto .tk-mais{display:grid}
+.tk-mais label{margin:0;font-size:12px}
+.tk-mais select{width:100%;margin-top:3px}
+.tk-mais input[type=color]{display:block;width:100%;margin-top:3px}
+details.novo{border:1px solid var(--line);border-radius:12px;padding:0 12px;background:var(--card)}
+details.novo[open]{padding-bottom:12px}
+details.novo summary{cursor:pointer;padding:11px 0;font-weight:600;list-style:none}
+details.novo summary::-webkit-details-marker{display:none}
+
+/* ---------- telas menores ---------- */
+@media (max-width:900px){
+  /* com o painel aberto, as ferramentas do mapa saem da frente (o painel ocupa o espaço) */
+  #mesa.painel-aberto #tools,#mesa.painel-aberto #tools-parede,#mesa.painel-aberto #tools-nevoa{display:none}
+  #faixa{top:calc(86px + env(safe-area-inset-top,0px));max-width:calc(100% - 24px)}
+}
+@media (min-width:901px){
+  /* com o painel aberto, o dock fica centralizado no pedaço de mapa que sobrou */
+  #mesa.painel-aberto #tools,#mesa.painel-aberto #tools-parede,#mesa.painel-aberto #tools-nevoa{left:calc((100% - 452px) / 2)}
+}
+@media (max-width:520px){
+  .rb{width:54px;min-height:50px}
+  #mesa #painel{right:72px;width:calc(100vw - 84px)}
+  .ferr{min-width:58px}
+  #t-nome{max-width:30vw}
+}
+@media (max-height:520px){ .rb{min-height:44px} .rb span{display:none} .ferr{min-height:46px} }
+#tools-parede .sep{display:none}
+.sec h3 + h3{margin-top:14px}
+#t-cena{color:#fff}
