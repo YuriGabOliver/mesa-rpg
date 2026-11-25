@@ -106,6 +106,7 @@ function validaToken(b, cena, ant = {}) {
   if (b.x !== undefined) t.x = num(b.x, 0, cena.w, ant.x || 0);
   if (b.y !== undefined) t.y = num(b.y, 0, cena.h, ant.y || 0);
   if (b.visao !== undefined) t.visao = Math.round(num(b.visao, 0, 20, ant.visao || 0));
+  if (b.bloqueiaPortas !== undefined) t.bloqueiaPortas = !!b.bloqueiaPortas;
   return t;
 }
 
@@ -204,7 +205,7 @@ function validaParede(s, cena) {
   if (!s || !Array.isArray(s.p) || s.p.length !== 4 || !s.p.every((v) => typeof v === 'number' && Number.isFinite(v))) return null;
   const p = s.p.map((v, i) => Math.round(num(v, 0, i % 2 ? cena.h : cena.w, 0)));
   if (Math.hypot(p[2] - p[0], p[3] - p[1]) < 4) return null;
-  return { id: rid(5), p, t: s.t === 1 ? 1 : 0, a: 0 };
+  return { id: rid(5), p, t: s.t === 1 ? 1 : 0, a: 0, l: 0 };
 }
 
 // uma operação da névoa: { t: 'r' revelar | 'h' esconder, k: 'rect' | 'circ' | 'path', ... }
@@ -314,7 +315,7 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true });
       }
       const n = acao === 'tokenMove' ? validaToken({ x: b.x, y: b.y }, cenaTk, t) : validaToken(b, cenaTk, t);
-      if ((acao === 'tokenMove' || (acao === 'tokenEdit' && (n.x !== t.x || n.y !== t.y))) && !c.mestre && cenaTk.bloqueia !== false && !caminhoLivre(cenaTk.paredes, t.x, t.y, n.x, n.y)) throw new Http(400, 'Caminho bloqueado por parede ou porta fechada');
+      if ((acao === 'tokenMove' || (acao === 'tokenEdit' && (n.x !== t.x || n.y !== t.y))) && (!c.mestre || (!t.dono && t.bloqueiaPortas !== false)) && cenaTk.bloqueia !== false && !caminhoLivre(cenaTk.paredes, t.x, t.y, n.x, n.y)) throw new Http(400, 'Caminho bloqueado por parede ou porta fechada');
       if (acao === 'tokenEdit' && c.mestre) {
         if (b.vis !== undefined) n.vis = !!b.vis;
         if (b.dono !== undefined) n.dono = idOk(b.dono, 6, 32) ? b.dono : '';
@@ -380,7 +381,7 @@ export default async function handler(req, res) {
     }
 
     /* ---------- névoa dinâmica: paredes e portas ---------- */
-    if (['paredeAdd', 'paredeDel', 'paredeTipo', 'portaAlterna', 'paredeLimpar'].includes(acao)) {
+    if (['paredeAdd', 'paredeDel', 'paredeTipo', 'portaAlterna', 'portaTrancar', 'paredeLimpar'].includes(acao)) {
       exigeMestre(c);
       const lista = Array.isArray(cena.paredes) ? cena.paredes : [], id = String(b.id || '');
       let nova = null;
@@ -393,8 +394,13 @@ export default async function handler(req, res) {
       else {
         if (!idOk(id, 3, 8) || !lista.some((s) => s.id === id)) throw new Http(404, 'Parede não encontrada');
         if (acao === 'paredeDel') nova = lista.filter((s) => s.id !== id);
-        else if (acao === 'paredeTipo') nova = lista.map((s) => (s.id === id ? { ...s, t: s.t ? 0 : 1, a: 0 } : s)); // parede vira porta fechada e vice-versa
-        else nova = lista.map((s) => (s.id === id && s.t ? { ...s, a: s.a ? 0 : 1 } : s)); // abre/fecha a porta
+        else if (acao === 'paredeTipo') nova = lista.map((s) => (s.id === id ? { ...s, t: s.t ? 0 : 1, a: 0, l: 0 } : s));
+        else {
+          const porta = lista.find((s) => s.id === id);
+          if (!porta.t) throw new Http(400, 'Essa parede nao e uma porta');
+          if (acao === 'portaTrancar') nova = lista.map((s) => (s.id === id ? { ...s, l: s.l ? 0 : 1, a: 0 } : s));
+          else { if (porta.l) throw new Http(409, 'A porta esta trancada'); nova = lista.map((s) => (s.id === id ? { ...s, a: s.a ? 0 : 1 } : s)); }
+        }
       }
       const nc = { ...cena }; if (nova.length) nc.paredes = nova; else delete nc.paredes;
       await rest('PATCH', `cenas?mesa=eq.${m}&id=eq.${c.alvo}`, { corpo: { cena: nc }, prefer: 'return=minimal' });

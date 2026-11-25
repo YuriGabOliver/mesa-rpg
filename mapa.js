@@ -15,7 +15,7 @@ export class Mapa {
     this.fogA = document.createElement('canvas'); this.fogB = document.createElement('canvas'); this.fogInfo = null;
     this.imgs = new Map(); this.fogSujo = true; this.sujo = true; this.dpr = 1;
     this.ultimoToque = { id: null, t: 0 }; this.regua = null; this.previa = null; this.primeiraVez = true;
-    this.parede = { modo: 'parede', grade: true }; this.pw = null; this.bloq = []; // névoa dinâmica: ferramenta de paredes e o que bloqueia a visão
+    this.parede = { modo: 'parede' }; this.pw = null; this.bloq = []; this.pendentePorta = null; // névoa dinâmica: ferramenta de paredes e o que bloqueia a visão
     new ResizeObserver(() => this.redimensiona()).observe(canvas.parentElement);
     this.eventos(); this.redimensiona();
     const laco = () => { if (this.sujo) { this.sujo = false; this.desenha(); } requestAnimationFrame(laco); };
@@ -86,26 +86,34 @@ export class Mapa {
   snapParede(p) {
     const tol = 14 / this.view.s; let melhor = null, dm = tol;
     for (const s of this.cena.paredes || []) for (let i = 0; i < 4; i += 2) { const d = Math.hypot(p.x - s.p[i], p.y - s.p[i + 1]); if (d < dm) { dm = d; melhor = { x: s.p[i], y: s.p[i + 1] }; } }
-    if (melhor) return melhor;
-    const g = this.cena.grade;
-    if (this.parede.grade && g.on && g.size) {
-      const gx = Math.round(p.x / g.size) * g.size, gy = Math.round(p.y / g.size) * g.size;
-      if (Math.hypot(p.x - gx, p.y - gy) < tol * 1.6) return { x: gx, y: gy };
-    }
-    return { x: Math.round(p.x), y: Math.round(p.y) };
+    return melhor || { x: Math.round(p.x), y: Math.round(p.y) };
   }
   hitParede(p) {
     let melhor = null, dm = 10 / this.view.s;
     for (const s of this.cena.paredes || []) { const d = distSeg(p.x, p.y, s.p); if (d <= dm) { dm = d; melhor = s; } }
     return melhor;
   }
-  cliqueParede(p) { // modos de clique: apagar e abrir/fechar
+  executaCliquePorta(s) {
+    if (!s || !this.cb.onParede) return;
+    if (!s.t) { if (this.cb.aviso) this.cb.aviso('Isso e uma parede. Use Porta para converter.'); return; }
+    if (s.l) { if (this.cb.aviso) this.cb.aviso('Porta trancada. Clique duas vezes para destrancar.'); return; }
+    this.cb.onParede({ op: 'alterna', id: s.id });
+  }
+  cliquePorta(s) {
+    if (this.pendentePorta) {
+      clearTimeout(this.pendentePorta.timer);
+      const anterior = this.pendentePorta.s; this.pendentePorta = null;
+      if (anterior.id === s.id) { if (this.cb.onParede) this.cb.onParede({ op: 'tranca', id: s.id }); return; }
+      this.executaCliquePorta(anterior);
+    }
+    this.pendentePorta = { s, timer: setTimeout(() => { const pend = this.pendentePorta; this.pendentePorta = null; if (pend) this.executaCliquePorta(pend.s); }, 320) };
+  }
+  cliqueParede(p) {
     const s = this.hitParede(p), m = this.parede.modo; if (!s || !this.cb.onParede) return;
     if (m === 'apagar') this.cb.onParede({ op: 'del', id: s.id });
-    else if (m === 'abrir') { if (s.t) this.cb.onParede({ op: 'alterna', id: s.id }); else if (this.cb.aviso) this.cb.aviso('Isso é uma parede. Use “Porta” para transformar em porta.'); }
-    else if (m === 'porta') this.cb.onParede({ op: 'tipo', id: s.id }); // clicar numa parede a transforma em porta (e uma porta, em parede)
+    else if (m === 'abrir') this.cliquePorta(s);
+    else if (m === 'porta') this.cb.onParede({ op: 'tipo', id: s.id });
   }
-
   eventos() {
     const c = this.c;
     c.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -173,7 +181,7 @@ export class Mapa {
         const t = this.tokens.find((k) => k.id === a.id);
         if (t) {
           const q = this.encaixa(t);
-          if (!this.mestre && this.cena.bloqueia !== false && !caminhoLivre(this.cena.paredes, a.x0, a.y0, q.x, q.y)) { // parede ou porta fechada no caminho: volta
+          if ((!this.mestre || (!t.dono && t.bloqueiaPortas !== false)) && this.cena.bloqueia !== false && !caminhoLivre(this.cena.paredes, a.x0, a.y0, q.x, q.y)) { // parede ou porta fechada no caminho: volta
             t.x = a.x0; t.y = a.y0; this.fogSujo = true; if (this.cb.aviso) this.cb.aviso('Caminho bloqueado por uma parede ou porta fechada');
           } else { t.x = q.x; t.y = q.y; this.fogSujo = true; if (this.cb.onMover) this.cb.onMover(t.id, t.x, t.y); }
         }
@@ -293,8 +301,9 @@ export class Mapa {
       const [x1, y1, x2, y2] = s.p;
       if (!s.t) { if (!gm) continue; g.strokeStyle = edit ? 'rgba(255,170,60,.95)' : 'rgba(255,170,60,.4)'; g.lineWidth = (edit ? 4 : 2.5) * k; g.setLineDash([]); }
       else if (s.a) { if (!gm) continue; g.strokeStyle = 'rgba(90,205,115,.9)'; g.lineWidth = 3 * k; g.setLineDash([6 * k, 5 * k]); }
-      else { g.strokeStyle = gm ? '#e0654f' : '#8a5a2b'; g.lineWidth = 5 * k; g.setLineDash([]); }
+      else { g.strokeStyle = s.l ? '#a855f7' : gm ? '#e0654f' : '#8a5a2b'; g.lineWidth = 5 * k; g.setLineDash([]); }
       g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke(); g.setLineDash([]);
+      if (s.t && s.l) { g.fillStyle = '#a855f7'; g.font = `bold ${10 * k}px system-ui,sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('L', (x1 + x2) / 2, (y1 + y2) / 2); g.textAlign = 'start'; }
       if (edit) { g.fillStyle = '#fff'; for (const [px, py] of [[x1, y1], [x2, y2]]) { g.beginPath(); g.arc(px, py, 3.5 * k, 0, 7); g.fill(); } }
     }
     if (edit && this.pw) {

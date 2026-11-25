@@ -157,7 +157,7 @@ function iniciaMapa() {
     podeMover: (t) => t.dono === E.pid,
     onMover: (id, x, y) => { api('tokenMove', { id, x, y }).then(() => poll(true)).catch((e) => { toast(e.message); poll(true); }); },
     onNevoa: (op) => agir('nevoaAdd', { ops: [op] }),
-    onParede: (o) => { if (o.op === 'add') agir('paredeAdd', { segs: o.segs }); else if (o.op === 'del') agir('paredeDel', { id: o.id }); else if (o.op === 'tipo') agir('paredeTipo', { id: o.id }); else if (o.op === 'alterna') agir('portaAlterna', { id: o.id }); },
+    onParede: (o) => { if (o.op === 'add') agir('paredeAdd', { segs: o.segs }); else if (o.op === 'del') agir('paredeDel', { id: o.id }); else if (o.op === 'tipo') agir('paredeTipo', { id: o.id }); else if (o.op === 'alterna') agir('portaAlterna', { id: o.id }); else if (o.op === 'tranca') agir('portaTrancar', { id: o.id }); },
     aviso: (m) => toast(m),
     urlToken,
     onSelecionar: (id) => { E.sel = id; marcaSel(); },
@@ -241,7 +241,7 @@ function aplica(j) {
   E.est = j; E.v = j.v; E.ultMud = Date.now();
   const chave = j.vendo || j.cenaId, antChave = ant && (ant.vendo || ant.cenaId);
   musica.estado(j.musica || null);
-  mapa.setMestre(j.papel === 'mestre'); mapa.setParedeFerr({ grade: !!ls.get('ml.paredeGrade', true) });
+  mapa.setMestre(j.papel === 'mestre');
   if (j.papel === 'mestre' && j.vendo !== E.vendo) { E.vendo = j.vendo; ls.set('ml.vendo.' + E.m, j.vendo); }
   if (!ant || ant.cena.img !== j.cena.img || antChave !== chave) mapa.setImagem(urlImagem(j.cena.img));
   mapa.setCena(j.cena); mapa.setTokens(j.tokens); mapa.setNevoa(j.nevoa); clima.define(j.cena.clima || null);
@@ -274,8 +274,7 @@ $('#tools').addEventListener('click', (e) => {
   mapa.c.style.cursor = b.dataset.f === 'mover' ? 'grab' : 'crosshair';
   $('#tools-nevoa').hidden = b.dataset.f !== 'nevoa'; $('#tools-parede').hidden = b.dataset.f !== 'parede';
 });
-$('#tools-parede').addEventListener('click',e=>{const b=e.target.closest('button[data-pm]');if(!b)return;document.querySelectorAll('#tools-parede [data-pm]').forEach(x=>x.classList.toggle('on',x===b));mapa.setParedeFerr({modo:b.dataset.pm});$('#p-dica').textContent={parede:'Arraste para desenhar uma parede.',porta:'Arraste para desenhar uma porta; toque numa parede para converter.',abrir:'Toque numa porta para abrir/fechar.',apagar:'Toque numa parede ou porta para apagar.'}[b.dataset.pm];});
-$('#p-grade').checked=!!ls.get('ml.paredeGrade',true);$('#p-grade').addEventListener('change',e=>{ls.set('ml.paredeGrade',e.target.checked);mapa.setParedeFerr({grade:e.target.checked});});
+$('#tools-parede').addEventListener('click',e=>{const b=e.target.closest('button[data-pm]');if(!b)return;document.querySelectorAll('#tools-parede [data-pm]').forEach(x=>x.classList.toggle('on',x===b));mapa.setParedeFerr({modo:b.dataset.pm});$('#p-dica').textContent={parede:'Arraste livremente; pontas proximas se unem.',porta:'Arraste livremente; toque numa parede para converter.',abrir:'Clique para abrir/fechar; clique duplo para trancar/destrancar.',apagar:'Toque numa parede ou porta para apagar.'}[b.dataset.pm];});
 $('#tools-nevoa').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.id === 'n-desfaz') return agir('nevoaDesfazer');
@@ -375,7 +374,7 @@ function atualizaPainel(forca) {
         : `<span class="thumb">${mini}</span><span class="ro">${esc(t.nome)}</span>`}
         ${souMestre() ? `<select class="dono"><option value="">Mestre</option>${j.jog.filter((x) => !x.mestre).map((x) => `<option value="${esc(x.id)}" ${x.id === t.dono ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}</select>
           <select class="visao" title="Revela a névoa em volta do token">${[[0, "Sem luz"], [1, "Luz 1"], [2, "Luz 2"], [3, "Luz 3"], [4, "Luz 4"], [5, "Luz 5"], [6, "Luz 6"], [7, "Luz 7"], [8, "Luz 8"], [9, "Luz 9"], [10, "Luz 10"], [11, "Luz 11"], [12, "Luz 12"], [13, "Luz 13"], [14, "Luz 14"], [15, "Luz 15"], [16, "Luz 16"], [17, "Luz 17"], [18, "Luz 18"], [19, "Luz 19"], [20, "Luz 20"]].map(([n, r]) => `<option value="${n}" ${(t.visao || 0) === n ? 'selected' : ''}>${r}</option>`).join('')}</select>
-          <button class="b mini" data-act="vis" title="Mostrar/ocultar para jogadores">${t.vis === false ? 'Oculto' : 'Visível'}</button>` : `<small>${esc(nomeDono)}</small>`}
+          <button class="b mini" data-act="vis" title="Mostrar/ocultar para jogadores">${t.vis === false ? 'Oculto' : 'Visível'}</button>${!t.dono ? `<button class="b mini ${t.bloqueiaPortas === false ? '' : 'on'}" data-act="portas" title="Alternar bloqueio por portas neste NPC">Portas: ${t.bloqueiaPortas === false ? 'ignora portas' : 'bloqueiam'}</button>` : ''}` : `<small>${esc(nomeDono)}</small>`}
         <button class="b mini" data-act="ir" title="Ir até o token">Ir</button>
         ${meu && t.img ? '<button class="b mini" data-act="rmimg" title="Tirar a imagem">Sem img</button>' : ''}
         ${meu ? '<button class="b mini" data-act="menu" title="Ações do token">Ações</button>' : ''}</li>`;
@@ -479,6 +478,7 @@ painel.addEventListener('click', async (e) => {
   if (t.dataset.act === 'del') agir('tokenDel', { id });
   else if (t.dataset.act === 'rmimg') agir('tokenImg', { id, dados: '' });
   else if (t.dataset.act === 'vis') agir('tokenEdit', { id, vis: tk.vis === false });
+  else if (t.dataset.act === 'portas' && souMestre() && tk && !tk.dono) agir('tokenEdit', { id, bloqueiaPortas: tk.bloqueiaPortas === false });
   else if (t.dataset.act === 'ir' && tk) { mapa.irPara(tk.x, tk.y); mapa.selecionar(id); E.sel = id; marcaSel(); if (innerWidth < 800) alternaPainel(false); }
 });
 painel.addEventListener('submit', (e) => {
