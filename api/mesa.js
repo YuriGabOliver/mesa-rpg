@@ -318,7 +318,7 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true });
       }
       const n = acao === 'tokenMove' ? validaToken({ x: b.x, y: b.y }, cenaTk, t) : validaToken(b, cenaTk, t);
-      if ((acao === 'tokenMove' || (acao === 'tokenEdit' && (n.x !== t.x || n.y !== t.y))) && (!c.mestre || (!t.dono && t.bloqueiaPortas !== false)) && cenaTk.bloqueia !== false && !caminhoLivre(cenaTk.paredes, t.x, t.y, n.x, n.y)) throw new Http(400, 'Caminho bloqueado por parede ou porta fechada');
+      if ((acao === 'tokenMove' || (acao === 'tokenEdit' && (n.x !== t.x || n.y !== t.y))) && cenaTk.bloqueia !== false && !caminhoLivre(cenaTk.paredes, t.x, t.y, n.x, n.y, !t.dono && t.bloqueiaPortas === false)) throw new Http(400, 'Caminho bloqueado por parede ou porta fechada');
       if (acao === 'tokenEdit' && c.mestre) {
         if (b.vis !== undefined) n.vis = !!b.vis;
         if (b.dono !== undefined) n.dono = idOk(b.dono, 6, 32) ? b.dono : '';

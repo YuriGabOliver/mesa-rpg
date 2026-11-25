@@ -186,7 +186,7 @@ export class Mapa {
         const t = this.tokens.find((k) => k.id === a.id);
         if (t) {
           const q = this.encaixa(t);
-          if ((!this.mestre || (!t.dono && t.bloqueiaPortas !== false)) && this.cena.bloqueia !== false && !caminhoLivre(this.cena.paredes, a.x0, a.y0, q.x, q.y)) { // parede ou porta fechada no caminho: volta
+          if (this.cena.bloqueia !== false && !caminhoLivre(this.cena.paredes, a.x0, a.y0, q.x, q.y, !t.dono && t.bloqueiaPortas === false)) { // parede ou porta fechada no caminho: volta
             t.x = a.x0; t.y = a.y0; this.fogSujo = true; if (this.cb.aviso) this.cb.aviso('Caminho bloqueado por uma parede ou porta fechada');
           } else { t.x = q.x; t.y = q.y; this.fogSujo = true; if (this.cb.onMover) this.cb.onMover(t.id, t.x, t.y); }
         }

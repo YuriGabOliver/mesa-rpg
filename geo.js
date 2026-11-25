@@ -16,8 +16,11 @@ export function cruza(ax, ay, bx, by, cx, cy, dx, dy) {
 }
 
 // o caminho reto (x0,y0)→(x1,y1) está livre de paredes e portas fechadas?
-export function caminhoLivre(paredes, x0, y0, x1, y1) {
-  for (const s of bloqueiam(paredes)) if (cruza(x0, y0, x1, y1, s[0], s[1], s[2], s[3])) return false;
+export function caminhoLivre(paredes, x0, y0, x1, y1, ignoraPortas = false) {
+  const segmentos = ignoraPortas
+    ? (Array.isArray(paredes) ? paredes.filter((p) => p && p.p && !p.t).map((p) => p.p) : [])
+    : bloqueiam(paredes);
+  for (const s of segmentos) if (cruza(x0, y0, x1, y1, s[0], s[1], s[2], s[3])) return false;
   return true;
 }
 
