@@ -12,7 +12,7 @@
 
 <section id="home" class="tela">
   <div class="home-box">
-    <h1>🗺️ Mesa Leve</h1>
+    <div class="home-head"><h1>🗺️ Mesa Leve</h1><button class="b theme-toggle" id="h-tema" type="button" aria-label="Mudar tema"></button></div>
     <p class="sub">Mapa, tokens, névoa e dados para a sua mesa de RPG. Sem cadastro: é só criar e mandar o link.</p>
 
     <div id="h-convite" hidden>
@@ -44,6 +44,7 @@
     <button class="b" id="t-som" hidden></button>
     <button class="b" id="t-conv">Convidar</button>
     <button class="b" id="t-painel">Painel</button>
+    <button class="b theme-toggle" id="t-tema" type="button" aria-label="Mudar tema"></button>
   </header>
   <main id="area">
     <div id="palco">
@@ -53,7 +54,11 @@
         <button class="b on" data-f="mover" title="Mover mapa e tokens">Mover</button>
         <button class="b" data-f="regua" title="Medir distância">Régua</button>
         <button class="b" data-f="nevoa" id="tool-nevoa" hidden title="Revelar área da névoa">Revelar</button>
+        <button class="b" data-f="parede" id="tool-parede" hidden title="Desenhar paredes e portas">Paredes</button>
         <button class="b" id="tool-centro" title="Centralizar o mapa">Centralizar</button>
+      </div>
+      <div id="tools-parede" hidden>
+        <button class="b on" data-pm="parede">Parede</button><button class="b" data-pm="porta">Porta</button><button class="b" data-pm="abrir">Abrir/fechar</button><button class="b" data-pm="apagar">Apagar</button><span class="sep"></span><label class="raio"><input type="checkbox" id="p-grade"> Encaixar na grade</label><span id="p-dica" class="dica">Arraste para desenhar paredes e portas.</span>
       </div>
       <div id="tools-nevoa" hidden>
         <button class="b on" data-na="r">Revelar</button><button class="b" data-na="h">Esconder</button>
@@ -80,6 +85,7 @@
   </main>
 </section>
 
+<section id="roll-popup" class="roll-popup" role="status" aria-live="polite" hidden><button id="roll-fechar" class="b mini" aria-label="Fechar resultado">Fechar</button><small id="roll-player"></small><b class="roll-label">Resultado</b><strong id="roll-total"></strong><span id="roll-expression"></span><span id="roll-detail"></span><b id="roll-kind"></b></section>
 <div id="toast" role="status"></div>
 <script type="module" src="/app.js"></script>
 </body>

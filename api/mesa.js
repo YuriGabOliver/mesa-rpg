@@ -1,6 +1,7 @@
 // API principal da mesa (Supabase). GET = estado. POST = ações. O servidor é quem valida permissões.
 import crypto from 'node:crypto';
 import { rest, avisa, subirImagem, apagarImagem } from './_db.js';
+import { caminhoLivre } from '../geo.js';
 
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 const AL = 'abcdefghjkmnpqrstuvwxyz23456789';
@@ -197,6 +198,17 @@ function leImagem(b, maxChars) {
   return { mime, ext: EXT[mime], buf: Buffer.from(dados, 'base64') };
 }
 
+// paredes e portas da névoa dinâmica (ficam em cenas.cena.paredes, sem tabela nova): { id, p: [x1,y1,x2,y2], t: 0 parede | 1 porta, a: 1 aberta }
+const MAX_PAREDES = 500;
+function validaParede(s, cena) {
+  if (!s || !Array.isArray(s.p) || s.p.length !== 4 || !s.p.every((v) => typeof v === 'number' && Number.isFinite(v))) return null;
+  const p = s.p.map((v, i) => Math.round(num(v, 0, i % 2 ? cena.h : cena.w, 0)));
+  if (Math.hypot(p[2] - p[0], p[3] - p[1]) < 4) return null;
+  return { id: rid(5), p, t: s.t === 1 ? 1 : 0, a: 0 };
+}
+
+// uma operação da névoa: { t: 'r' revelar | 'h' esconder, k: 'rect' | 'circ' | 'path', ... }
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   try {
@@ -302,6 +314,7 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true });
       }
       const n = acao === 'tokenMove' ? validaToken({ x: b.x, y: b.y }, cenaTk, t) : validaToken(b, cenaTk, t);
+      if ((acao === 'tokenMove' || (acao === 'tokenEdit' && (n.x !== t.x || n.y !== t.y))) && !c.mestre && cenaTk.bloqueia !== false && !caminhoLivre(cenaTk.paredes, t.x, t.y, n.x, n.y)) throw new Http(400, 'Caminho bloqueado por parede ou porta fechada');
       if (acao === 'tokenEdit' && c.mestre) {
         if (b.vis !== undefined) n.vis = !!b.vis;
         if (b.dono !== undefined) n.dono = idOk(b.dono, 6, 32) ? b.dono : '';
@@ -322,6 +335,7 @@ export default async function handler(req, res) {
         m: num(g.m, 0.1, 1000, cena.grade.m),
       };
       if (b.nevoa !== undefined) nova.nevoa = !!b.nevoa;
+      if (b.bloqueia !== undefined) nova.bloqueia = !!b.bloqueia;
       if (b.clima !== undefined) { const cl = validaClima(b.clima); if (cl) nova.clima = cl; else delete nova.clima; } // null = sem clima
       await rest('PATCH', `cenas?mesa=eq.${m}&id=eq.${c.alvo}`, { corpo: { cena: nova }, prefer: 'return=minimal' });
       await bump(m);
@@ -361,6 +375,29 @@ export default async function handler(req, res) {
     if (acao === 'nevoaCobrir') {
       exigeMestre(c);
       await rest('DELETE', `nevoa?${filtroCena}`);
+      await bump(m);
+      return res.status(200).json({ ok: true });
+    }
+
+    /* ---------- névoa dinâmica: paredes e portas ---------- */
+    if (['paredeAdd', 'paredeDel', 'paredeTipo', 'portaAlterna', 'paredeLimpar'].includes(acao)) {
+      exigeMestre(c);
+      const lista = Array.isArray(cena.paredes) ? cena.paredes : [], id = String(b.id || '');
+      let nova = null;
+      if (acao === 'paredeAdd') {
+        const novas = (Array.isArray(b.segs) ? b.segs : []).slice(0, 20).map((s) => validaParede(s, cena)).filter(Boolean);
+        if (!novas.length) throw new Http(400, 'Parede inválida');
+        if (lista.length + novas.length > MAX_PAREDES) throw new Http(400, `Limite de ${MAX_PAREDES} paredes por cena`);
+        nova = [...lista, ...novas];
+      } else if (acao === 'paredeLimpar') nova = [];
+      else {
+        if (!idOk(id, 3, 8) || !lista.some((s) => s.id === id)) throw new Http(404, 'Parede não encontrada');
+        if (acao === 'paredeDel') nova = lista.filter((s) => s.id !== id);
+        else if (acao === 'paredeTipo') nova = lista.map((s) => (s.id === id ? { ...s, t: s.t ? 0 : 1, a: 0 } : s)); // parede vira porta fechada e vice-versa
+        else nova = lista.map((s) => (s.id === id && s.t ? { ...s, a: s.a ? 0 : 1 } : s)); // abre/fecha a porta
+      }
+      const nc = { ...cena }; if (nova.length) nc.paredes = nova; else delete nc.paredes;
+      await rest('PATCH', `cenas?mesa=eq.${m}&id=eq.${c.alvo}`, { corpo: { cena: nc }, prefer: 'return=minimal' });
       await bump(m);
       return res.status(200).json({ ok: true });
     }

@@ -8,6 +8,10 @@ const ls = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem armazenamento */ } },
 };
+const temaInit=ls.get('ml.tema','escuro')==='claro'?'claro':'escuro';document.documentElement.dataset.tema=temaInit;
+function sincronizaTema(){const cl=document.documentElement.dataset.tema==='claro';['#h-tema','#t-tema'].forEach(q=>{const b=$(q);if(b){b.textContent=cl?'Escuro':'Claro';b.title=cl?'Ativar tema escuro':'Ativar tema claro';b.setAttribute('aria-label',b.title);}});const m=$('meta[name=theme-color]');if(m)m.content=cl?'#f1efe8':'#0f172a';}
+function alternaTema(){document.documentElement.dataset.tema=document.documentElement.dataset.tema==='claro'?'escuro':'claro';ls.set('ml.tema',document.documentElement.dataset.tema);sincronizaTema();}
+['#h-tema','#t-tema'].forEach(q=>$(q).addEventListener('click',alternaTema));sincronizaTema();
 const AL = 'abcdefghjkmnpqrstuvwxyz23456789';
 const novoId = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => AL[b % AL.length]).join('');
 const POLL_ATIVO = 1500, POLL_PARADO = 3500, POLL_ESCONDIDO = 8000, JANELA_ATIVA = 20000; // ms
@@ -153,6 +157,8 @@ function iniciaMapa() {
     podeMover: (t) => t.dono === E.pid,
     onMover: (id, x, y) => { api('tokenMove', { id, x, y }).then(() => poll(true)).catch((e) => { toast(e.message); poll(true); }); },
     onNevoa: (op) => agir('nevoaAdd', { ops: [op] }),
+    onParede: (o) => { if (o.op === 'add') agir('paredeAdd', { segs: o.segs }); else if (o.op === 'del') agir('paredeDel', { id: o.id }); else if (o.op === 'tipo') agir('paredeTipo', { id: o.id }); else if (o.op === 'alterna') agir('portaAlterna', { id: o.id }); },
+    aviso: (m) => toast(m),
     urlToken,
     onSelecionar: (id) => { E.sel = id; marcaSel(); },
     onDuplo: () => { E.aba = 'tokens'; desenhaPainel(); if (!E.painel) alternaPainel(true); },
@@ -230,10 +236,12 @@ function agendar() {
 document.addEventListener('visibilitychange', () => { if (!document.hidden && E.m) poll(true); });
 
 function aplica(j) {
-  const ant = E.est; E.est = j; E.v = j.v; E.ultMud = Date.now();
+  const ant = E.est;
+  if(ant&&j.log&&j.log.length){const last=Math.max(0,...ant.log.map(x=>Number(x.t)||0));const nr=j.log.filter(x=>Number(x.t)>last).sort((a,b)=>a.t-b.t);if(nr.length)mostraRolagem(nr[nr.length-1]);}
+  E.est = j; E.v = j.v; E.ultMud = Date.now();
   const chave = j.vendo || j.cenaId, antChave = ant && (ant.vendo || ant.cenaId);
   musica.estado(j.musica || null);
-  mapa.setMestre(j.papel === 'mestre');
+  mapa.setMestre(j.papel === 'mestre'); mapa.setParedeFerr({ grade: !!ls.get('ml.paredeGrade', true) });
   if (j.papel === 'mestre' && j.vendo !== E.vendo) { E.vendo = j.vendo; ls.set('ml.vendo.' + E.m, j.vendo); }
   if (!ant || ant.cena.img !== j.cena.img || antChave !== chave) mapa.setImagem(urlImagem(j.cena.img));
   mapa.setCena(j.cena); mapa.setTokens(j.tokens); mapa.setNevoa(j.nevoa); clima.define(j.cena.clima || null);
@@ -246,7 +254,7 @@ function aplica(j) {
   $('#t-nome').textContent = j.nome;
   $('#t-papel').textContent = j.papel === 'mestre' ? 'Mestre' : 'Jogador';
   const tc = $('#t-cena'); tc.hidden = j.papel !== 'mestre'; if (!tc.hidden) tc.textContent = j.cenaNome;
-  $('#tool-nevoa').hidden = j.papel !== 'mestre';
+  $('#tool-nevoa').hidden = j.papel !== 'mestre'; $('#tool-parede').hidden = j.papel !== 'mestre';
   atualizaFaixa();
   if (!ant || ant.papel !== j.papel) desenhaPainel(); else atualizaPainel();
 }
@@ -264,8 +272,10 @@ $('#tools').addEventListener('click', (e) => {
   mapa.setFerramenta(b.dataset.f);
   document.querySelectorAll('#tools [data-f]').forEach((x) => x.classList.toggle('on', x === b));
   mapa.c.style.cursor = b.dataset.f === 'mover' ? 'grab' : 'crosshair';
-  $('#tools-nevoa').hidden = b.dataset.f !== 'nevoa';
+  $('#tools-nevoa').hidden = b.dataset.f !== 'nevoa'; $('#tools-parede').hidden = b.dataset.f !== 'parede';
 });
+$('#tools-parede').addEventListener('click',e=>{const b=e.target.closest('button[data-pm]');if(!b)return;document.querySelectorAll('#tools-parede [data-pm]').forEach(x=>x.classList.toggle('on',x===b));mapa.setParedeFerr({modo:b.dataset.pm});$('#p-dica').textContent={parede:'Arraste para desenhar uma parede.',porta:'Arraste para desenhar uma porta; toque numa parede para converter.',abrir:'Toque numa porta para abrir/fechar.',apagar:'Toque numa parede ou porta para apagar.'}[b.dataset.pm];});
+$('#p-grade').checked=!!ls.get('ml.paredeGrade',true);$('#p-grade').addEventListener('change',e=>{ls.set('ml.paredeGrade',e.target.checked);mapa.setParedeFerr({grade:e.target.checked});});
 $('#tools-nevoa').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.id === 'n-desfaz') return agir('nevoaDesfazer');
@@ -324,6 +334,7 @@ function desenhaPainel() {
       </div>
       <p class="dica">Vale para esta cena e aparece para todos. Cada pessoa pode desligar os efeitos no próprio aparelho (aba Mesa).</p></div>
     <div class="sec"><h3>Névoa de guerra</h3>
+      <h3>Névoa dinâmica</h3><p class="dica" id="pw-info"></p><label class="linha"><input type="checkbox" id="c-bloqueia"> Paredes e portas fechadas bloqueiam o movimento</label><button class="b" id="b-pw-limpar">Apagar todas as paredes</button><p class="dica">Desenhe paredes e portas sobre o mapa. Dê alcance de luz aos tokens para revelar a névoa; obstáculos fechados interrompem a luz.</p>
       <label class="linha"><input type="checkbox" id="c-nevoa"> Névoa ativa</label>
       <div class="f-add" style="margin-top:8px"><button class="b" id="b-cobrir">Cobrir tudo de novo</button><button class="b" id="b-desfaz">Desfazer última</button></div>
       <p class="dica">Com a névoa ativa, os jogadores só veem o que você revelar com a ferramenta “Revelar” (retângulo, círculo ou pincel; também dá para “Esconder” de novo). Para você ela aparece translúcida. Nos tokens, o campo “Visão” revela sozinho o entorno do token.</p></div>`;
@@ -349,7 +360,7 @@ function atualizaPainel(forca) {
   if (!forca && !podeEditar()) { E.adiaPainel = true; return; }
   E.adiaPainel = false;
   if (E.aba === 'dados') {
-    $('#log').innerHTML = [...j.log].reverse().map((l) => `<li><b>${esc(l.a)}</b> <small>${esc(l.e)}</small><span class="tot">${l.s}</span><span class="det">${esc(detalhe(l.d))}</span></li>`).join('') || '<li class="dica">Nenhuma rolagem ainda.</li>';
+    $('#log').innerHTML = [...j.log].reverse().map((l) => `<li class="rolagem ${extremoRolagem(l)}"><b>${esc(l.a)}</b> <small>${esc(l.e)}</small><span class="tot">${l.s}</span><span class="det">${detalheHtml(l.d)}</span></li>`).join('') || '<li class="dica">Nenhuma rolagem ainda.</li>';
   } else if (E.aba === 'tokens') {
     const dono = $('#a-dono');
     if (dono) { const v = dono.value; dono.innerHTML = '<option value="">Mestre (NPC)</option>' + j.jog.filter((x) => !x.mestre).map((x) => `<option value="${esc(x.id)}">${esc(x.nome)}</option>`).join(''); dono.value = v; }
@@ -363,7 +374,7 @@ function atualizaPainel(forca) {
           <select class="tam">${[1, 2, 3, 4].map((n) => `<option ${n === t.tam ? 'selected' : ''} value="${n}">${n}×${n}</option>`).join('')}</select>`
         : `<span class="thumb">${mini}</span><span class="ro">${esc(t.nome)}</span>`}
         ${souMestre() ? `<select class="dono"><option value="">Mestre</option>${j.jog.filter((x) => !x.mestre).map((x) => `<option value="${esc(x.id)}" ${x.id === t.dono ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}</select>
-          <select class="visao" title="Revela a névoa em volta do token">${[[0, 'Sem visão'], [3, 'Visão 3'], [6, 'Visão 6'], [9, 'Visão 9'], [12, 'Visão 12']].map(([n, r]) => `<option value="${n}" ${(t.visao || 0) === n ? 'selected' : ''}>${r}</option>`).join('')}</select>
+          <select class="visao" title="Revela a névoa em volta do token">${[[0, "Sem luz"], [1, "Luz 1"], [2, "Luz 2"], [3, "Luz 3"], [4, "Luz 4"], [5, "Luz 5"], [6, "Luz 6"], [7, "Luz 7"], [8, "Luz 8"], [9, "Luz 9"], [10, "Luz 10"], [11, "Luz 11"], [12, "Luz 12"], [13, "Luz 13"], [14, "Luz 14"], [15, "Luz 15"], [16, "Luz 16"], [17, "Luz 17"], [18, "Luz 18"], [19, "Luz 19"], [20, "Luz 20"]].map(([n, r]) => `<option value="${n}" ${(t.visao || 0) === n ? 'selected' : ''}>${r}</option>`).join('')}</select>
           <button class="b mini" data-act="vis" title="Mostrar/ocultar para jogadores">${t.vis === false ? 'Oculto' : 'Visível'}</button>` : `<small>${esc(nomeDono)}</small>`}
         <button class="b mini" data-act="ir" title="Ir até o token">Ir</button>
         ${meu && t.img ? '<button class="b mini" data-act="rmimg" title="Tirar a imagem">Sem img</button>' : ''}
@@ -390,7 +401,7 @@ function atualizaPainel(forca) {
     const g = j.cena.grade;
     $('#c-grade').checked = g.on; $('#c-snap').checked = g.snap; $('#c-size').value = g.size; $('#c-size-v').textContent = g.size;
     if (document.activeElement !== $('#c-m')) $('#c-m').value = g.m;
-    $('#c-nevoa').checked = j.cena.nevoa;
+    $('#c-nevoa').checked = j.cena.nevoa; const pw=j.cena.paredes||[], np=pw.filter(x=>x.t).length; $('#c-bloqueia').checked=j.cena.bloqueia!==false; $('#pw-info').textContent=pw.length?`${pw.length-np} parede(s), ${np} porta(s)`:'Nenhuma parede nesta cena.';
     const cl = j.cena.clima || {}, def = (id, v) => { const e = $(id); if (e && document.activeElement !== e) e.value = v; };
     def('#cl-tipo', cl.tipo || 'nenhum'); def('#cl-dir', cl.dir ?? 0); def('#cl-vento', cl.vento ?? 20); def('#cl-cob', cl.cob ?? 50); climaForm();
   } else if (E.aba === 'musica') {
@@ -408,6 +419,10 @@ function climaForm() {
   $('#cl-vento-v').textContent = $('#cl-vento').value; $('#cl-cob-v').textContent = $('#cl-cob').value;
   return tipo === 'nenhum' ? null : { tipo, dir, vento: +$('#cl-vento').value, cob: +$('#cl-cob').value };
 }
+function extremoRolagem(l){let min=0,max=0,has=false;for(const p of l.d||[]){if(p.k!==undefined){min+=p.s*p.k;max+=p.s*p.k;continue;}if(!p.n||!p.f)continue;has=true;if(p.s<0){min-=p.n*p.f;max-=p.n;}else{min+=p.n;max+=p.n*p.f;}}return !has?'':Number(l.s)===max?'maximo':Number(l.s)===min?'minimo':'';}
+function detalheHtml(d){return(d||[]).map((p,i)=>{const sg=p.s<0?'-':i?'+':'';if(p.k!==undefined)return(i||p.s<0?' ':'')+sg+(sg?' ':'')+String(p.k);const rs=(p.r||[]).map(n=>'<i class="dado '+(p.s<0?(n===1?'die-max':n===p.f?'die-min':''):(n===p.f?'die-max':n===1?'die-min':''))+'">'+Number(n)+'</i>').join(' ');return(i||p.s<0?' ':'')+sg+(sg?' ':'')+'['+rs+']';}).join('').trim();}
+let rollTimer=null;function mostraRolagem(l){const p=$('#roll-popup'),x=extremoRolagem(l);p.dataset.extremo=x;$('#roll-player').textContent=l.a||'Jogador';$('#roll-total').textContent=String(l.s);$('#roll-expression').textContent=l.e||'';$('#roll-detail').innerHTML=detalheHtml(l.d);$('#roll-kind').textContent=x==='maximo'?'Resultado m\u00e1ximo':x==='minimo'?'Resultado m\u00ednimo':'';p.hidden=false;clearTimeout(rollTimer);rollTimer=setTimeout(()=>p.hidden=true,6500);}
+$('#roll-fechar').addEventListener('click',()=>{ $('#roll-popup').hidden=true;clearTimeout(rollTimer);});
 function detalhe(d) {
   return (d || []).map((p, i) => {
     const sinal = p.s < 0 ? '−' : (i ? '+' : ''), corpo = p.k !== undefined ? p.k : `[${p.r.join(', ')}]`;
@@ -428,6 +443,7 @@ painel.addEventListener('click', async (e) => {
   if (t.dataset.d) return agir('rolar', { expr: t.dataset.d });
   if (t.dataset.cp) return copiar(t.dataset.cp === 'j' ? linkJogador() : linkMestre());
   if (t.id === 'm-sair') return sair();
+  if (t.id === 'b-pw-limpar') return confirm('Apagar todas as paredes e portas desta cena?') ? agir('paredeLimpar') : undefined;
   if (t.id === 'b-cobrir') return agir('nevoaCobrir');
   if (t.id === 'b-desfaz') return agir('nevoaDesfazer');
   if (t.id === 'cn-ok') {
@@ -490,6 +506,7 @@ painel.addEventListener('change', async (e) => {
   if (['c-grade', 'c-snap', 'c-size', 'c-m'].includes(el.id)) {
     return agir('cena', { grade: { on: $('#c-grade').checked, snap: $('#c-snap').checked, size: +$('#c-size').value, m: +$('#c-m').value || 1.5 } });
   }
+  if (el.id === 'c-bloqueia') return agir('cena', { bloqueia: el.checked });
   if (el.id === 'c-nevoa') return agir('cena', { nevoa: el.checked, grade: E.est.cena.grade });
 });
 painel.addEventListener('input', (e) => {
