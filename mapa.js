@@ -165,7 +165,13 @@ export class Mapa {
       } else if (a.tipo === 'pan') { this.view.x = a.vx + e.offsetX - a.sx; this.view.y = a.vy + e.offsetY - a.sy; }
       else if (a.tipo === 'token') {
         const t = this.tokens.find((k) => k.id === a.id); const p = this.mundo(e.offsetX, e.offsetY);
-        if (t) { t.x = Math.min(this.cena.w, Math.max(0, p.x - a.dx)); t.y = Math.min(this.cena.h, Math.max(0, p.y - a.dy)); a.mexeu = true; if (t.visao > 0) this.fogSujo = true; }
+        if (t) {
+          const x = Math.min(this.cena.w, Math.max(0, p.x - a.dx)), y = Math.min(this.cena.h, Math.max(0, p.y - a.dy));
+          const ignoraPortas = !t.dono && t.bloqueiaPortas === false;
+          if (this.cena.bloqueia === false || caminhoLivre(this.cena.paredes, a.x0, a.y0, x, y, ignoraPortas)) {
+            t.x = x; t.y = y; a.mexeu = true; if (t.visao > 0) this.fogSujo = true;
+          }
+        }
       } else if (a.tipo === 'elemento') { const el = this.elementos.find((k) => k.id === a.id), p = this.mundo(e.offsetX, e.offsetY); if (el) { el.x = Math.min(this.cena.w, Math.max(0, p.x - a.dx)); el.y = Math.min(this.cena.h, Math.max(0, p.y - a.dy)); a.mexeu = true; } }
       else if (a.tipo === 'parede' && this.pw) this.pw.b = this.snapParede(this.mundo(e.offsetX, e.offsetY));
       else if (a.tipo === 'regua') this.regua.b = this.mundo(e.offsetX, e.offsetY);
@@ -274,8 +280,8 @@ export class Mapa {
   }
   desenhaElementos() {
     const g = this.g, k = 1 / this.view.s;
-    for (const e of this.elementos) { const im = this.elementoImg(e); if (!im) continue; g.globalAlpha = e.vis === false && this.mestre ? .45 : 1; g.drawImage(im, e.x - e.w / 2, e.y - e.h / 2, e.w, e.h); g.globalAlpha = 1; if (this.mestre) { g.font = `bold ${Math.max(11 * k, 13)}px system-ui,sans-serif`; g.textAlign = 'center'; g.textBaseline = 'top'; g.lineWidth = 3 * k; g.strokeStyle = 'rgba(0,0,0,.85)'; g.strokeText(e.nome || '', e.x, e.y + e.h / 2 + 3 * k); g.fillStyle = '#fff'; g.fillText(e.nome || '', e.x, e.y + e.h / 2 + 3 * k); } }
-    g.textAlign = 'start';
+    for (const e of this.elementos) { const im = this.elementoImg(e); if (!im) continue; g.globalAlpha = e.vis === false && this.mestre ? .45 : 1; g.drawImage(im, e.x - e.w / 2, e.y - e.h / 2, e.w, e.h); }
+    g.globalAlpha = 1;
   }
   desenha() {
     const g = this.g, { w, h, grade } = this.cena, v = this.view, d = this.dpr, k = 1 / v.s;

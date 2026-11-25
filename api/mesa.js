@@ -248,7 +248,7 @@ export default async function handler(req, res) {
       }
       const dono = c.mestre ? (idOk(b.dono || '', 6, 32) ? b.dono : '') : c.pid;
       const t = validaToken({ nome: b.nome || 'Token', cor: COR.test(b.cor) ? b.cor : '#c0392b', tam: b.tam || 1, x: b.x, y: b.y }, cena);
-      t.id = rid(6); t.dono = dono; t.vis = c.mestre ? b.vis !== false : true; t.img = null; t.visao = 0;
+      t.id = rid(6); t.dono = dono; t.vis = c.mestre ? (dono ? true : b.vis === true) : true; t.img = null; t.visao = 0;
       await rest('POST', 'tokens', { corpo: { mesa: m, id: t.id, cena: c.alvo, dados: t }, prefer: 'return=minimal' });
       await bump(m);
       return res.status(200).json({ ok: true, id: t.id });
@@ -368,7 +368,7 @@ export default async function handler(req, res) {
         const im = leImagem(b, 1200000), arq = `e-${rid(8)}.${im.ext}`;
         await subirImagem(`${m}/${arq}`, im.buf, im.mime);
         const razao = num(b.razao, 0.15, 6, 1), altura = Math.min(cena.h, num(b.h, 30, 900, cena.grade.size * 2)), largura = Math.min(cena.w, Math.round(altura * razao));
-        const el = { id: rid(6), nome: txt(b.nome, 40) || 'Elemento', img: arq, x: num(b.x, 0, cena.w, cena.w / 2), y: num(b.y, 0, cena.h, cena.h / 2), w: largura, h: Math.round(largura / razao), vis: true };
+        const el = { id: rid(6), nome: txt(b.nome, 40), img: arq, x: num(b.x, 0, cena.w, cena.w / 2), y: num(b.y, 0, cena.h, cena.h / 2), w: largura, h: Math.round(largura / razao), vis: false };
         await rest('PATCH', `cenas?mesa=eq.${m}&id=eq.${c.alvo}`, { corpo: { cena: { ...cena, elementos: [...lista, el] } }, prefer: 'return=minimal' });
         await bump(m); return res.status(200).json({ ok: true, id: el.id });
       }

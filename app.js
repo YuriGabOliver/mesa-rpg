@@ -327,7 +327,7 @@ function desenhaPainel() {
       <div class="f-add"><input type="color" id="a-cor" value="${CORES[(E.est ? E.est.tokens.length : 0) % CORES.length]}"><input class="n" id="a-nome" maxlength="12" placeholder="Nome">
         <select id="a-tam"><option value="1">1×1</option><option value="2">2×2</option><option value="3">3×3</option></select>
         <label class="b mini" style="margin:0;display:inline-flex;align-items:center">Imagem<input type="file" id="a-img" accept="image/*" hidden></label><span id="a-img-nome" class="dica" style="margin:0"></span>
-        ${souMestre() ? '<select id="a-dono"></select>' : ''}<button class="b prim" id="a-ok">Adicionar</button></div>
+        ${souMestre() ? '<select id="a-dono"></select><label class="linha"><input type="checkbox" id="a-vis"> Visível para jogadores</label>' : ''}<button class="b prim" id="a-ok">Adicionar</button></div>
       <p class="dica">Aparece no centro da sua tela. Arraste para posicionar. Para trocar a imagem de um token, toque na bolinha dele na lista abaixo.</p>
     </div><div class="sec"><h3>Tokens nesta cena</h3><ul id="lista-tk"></ul></div>
     <div class="sec"><h3>Biblioteca de tokens</h3><p class="dica">Tokens guardados ficam disponíveis para outras cenas. Os ativos em outras cenas podem ser duplicados para esta.</p><ul id="lista-biblioteca"></ul></div>`;
@@ -513,8 +513,9 @@ painel.addEventListener('click', async (e) => {
   }
   if (t.id === 'a-ok') {
     const c = mapa.centro(), tam = +$('#a-tam').value, p = mapa.encaixa({ x: c.x, y: c.y, tam }), arq = $('#a-img').files[0];
-    const r = await agir('tokenAdd', { nome: $('#a-nome').value || 'Token', cor: $('#a-cor').value, tam, x: p.x, y: p.y, dono: $('#a-dono') ? $('#a-dono').value : undefined });
-    $('#a-nome').value = ''; $('#a-img').value = ''; $('#a-img-nome').textContent = '';
+    const dono = $('#a-dono') ? $('#a-dono').value : '', vis = !!dono || !!$('#a-vis')?.checked;
+    const r = await agir('tokenAdd', { nome: $('#a-nome').value || 'Token', cor: $('#a-cor').value, tam, x: p.x, y: p.y, dono: $('#a-dono') ? dono : undefined, vis });
+    $('#a-nome').value = ''; $('#a-img').value = ''; $('#a-img-nome').textContent = ''; if ($('#a-vis')) $('#a-vis').checked = false;
     if (r && r.id && arq) await enviaImgToken(r.id, arq);
     return;
   }
