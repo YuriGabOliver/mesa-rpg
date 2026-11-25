@@ -92,12 +92,14 @@ export class Mapa {
   pode(t) { return this.mestre || (this.cb.podeMover ? this.cb.podeMover(t) : false); }
   hit(p) {
     const extra = 6 / this.view.s;
-    for (let i = this.tokens.length - 1; i >= 0; i--) {
-      const t = this.tokens[i];
+    const lista = this.ordemTokens();
+    for (let i = lista.length - 1; i >= 0; i--) {
+      const t = lista[i];
       if (Math.hypot(p.x - t.x, p.y - t.y) <= this.raio(t) + extra) return t;
     }
     return null;
   }
+  ordemTokens() { return this.cena.ordemY ? [...this.tokens].sort((a, b) => a.y - b.y) : this.tokens; } // com "ordem por altura", quem está mais embaixo fica na frente
   hitElemento(p) { for (let i = this.elementos.length - 1; i >= 0; i--) { const e = this.elementos[i]; if (p.x >= e.x - e.w / 2 && p.x <= e.x + e.w / 2 && p.y >= e.y - e.h / 2 && p.y <= e.y + e.h / 2) return e; } return null; }
   encaixa(t) {
     const g = this.cena.grade;
@@ -369,7 +371,7 @@ export class Mapa {
   }
   desenhaTokens() {
     const g = this.g, k = 1 / this.view.s;
-    for (const t of this.tokens) {
+    for (const t of this.ordemTokens()) {
       const r = this.raio(t), oculto = t.vis === false, im = this.tokImg(t);
       g.globalAlpha = oculto ? 0.45 : 1;
       g.beginPath(); g.arc(t.x, t.y + 2 * k, r, 0, 7); g.fillStyle = 'rgba(0,0,0,.45)'; g.fill();
@@ -377,6 +379,7 @@ export class Mapa {
       if (im) {
         g.save(); g.beginPath(); g.arc(t.x, t.y, r, 0, 7); g.clip();
         const lado = Math.min(im.width, im.height); // recorte quadrado central
+        if (t.espelho) { g.translate(t.x * 2, 0); g.scale(-1, 1); } // espelhado: vira a imagem para o outro lado
         g.drawImage(im, (im.width - lado) / 2, (im.height - lado) / 2, lado, lado, t.x - r, t.y - r, r * 2, r * 2); g.restore();
       }
       g.beginPath(); g.arc(t.x, t.y, r, 0, 7); g.lineWidth = 3 * k; g.strokeStyle = this.sel === t.id ? '#ffd34d' : (t.cor || '#fff');

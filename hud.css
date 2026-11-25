@@ -105,3 +105,12 @@ details.novo summary::-webkit-details-marker{display:none}
 #tools-parede .sep{display:none}
 .sec h3 + h3{margin-top:14px}
 #t-cena{color:#fff}
+
+/* formas ligadas */
+#lista-tk li.repouso{opacity:.7;border-style:dashed}
+.tk-linha .troca{background:color-mix(in srgb,var(--acc) 22%,transparent);border-color:var(--acc)}
+.lig-info{grid-column:1/-1;font-size:12px;color:var(--mut)}
+.lig-info b{color:var(--ink)}
+.lig-linha{display:flex;gap:6px;grid-column:1/-1}
+.lig-linha select{flex:1;min-width:0}
+.tk-mais .b.on{background:var(--acc);color:#1a1209;border-color:var(--acc)}

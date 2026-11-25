@@ -82,7 +82,7 @@ async function estado(req, res) {
     rest('GET', `chat?mesa=eq.${m}&select=id,dados&order=id.desc&limit=${MAX_CHAT}`).catch((e) => { if (/PGRST205|Could not find the table/i.test(e.message)) return []; throw e; }),
   ]);
   let tokens = tk.map((x) => x.dados);
-  if (!c.mestre) tokens = tokens.filter((t) => t.vis !== false || t.dono === c.pid);
+  if (!c.mestre) tokens = tokens.filter((t) => (t.vis !== false || t.dono === c.pid) && (!t.repouso || t.dono === c.pid)); // formas em repouso só aparecem para o dono
   const out = {
     v: Number(c.row.v), agora: Date.now(), musica: c.row.musica || null, efeitos: (c.row.efeitos || []).filter((x) => x.loop || Date.now() < x.t + x.dur * 1000),
     nome: c.row.nome, papel: c.mestre ? 'mestre' : 'jogador', cena: c.cena, tokens,
@@ -93,10 +93,10 @@ async function estado(req, res) {
   if (c.mestre) {
     out.cenas = cs.map((x) => ({ id: x.id, nome: x.nome }));
     out.ativa = c.ativa; out.vendo = c.alvo; out.cenaNome = c.cenaNome;
-    out.biblioteca = todosTokens.map((x) => ({ ...x.dados, cena: x.cena }));
+    out.biblioteca = todosTokens.filter((x) => !x.dados.repouso).map((x) => ({ ...x.dados, cena: x.cena }));
   } else {
     out.cenaId = c.ativa;
-    out.biblioteca = todosTokens.map((x) => ({ ...x.dados, cena: x.cena }));
+    out.biblioteca = todosTokens.filter((x) => !x.dados.repouso).map((x) => ({ ...x.dados, cena: x.cena }));
   } // jogadores só sabem que existe "a cena atual"
   return res.status(200).json(out);
 }
@@ -110,6 +110,7 @@ function validaToken(b, cena, ant = {}) {
   if (b.y !== undefined) t.y = num(b.y, 0, cena.h, ant.y || 0);
   if (b.visao !== undefined) t.visao = Math.round(num(b.visao, 0, 20, ant.visao || 0));
   if (b.bloqueiaPortas !== undefined) t.bloqueiaPortas = !!b.bloqueiaPortas;
+  if (b.espelho !== undefined) { if (b.espelho) t.espelho = true; else delete t.espelho; } // imagem virada para o outro lado
   return t;
 }
 
@@ -263,6 +264,7 @@ export default async function handler(req, res) {
 
       if (acao === 'tokenGuardar') {
         if (row.cena === null) return res.status(200).json({ ok: true });
+        if (t.par) throw new Http(400, 'Desligue as duas formas antes de guardar este token');
         if (!c.mestre && (t.dono !== c.pid || row.cena !== c.ativa)) throw new Http(403, 'Esse token não é seu');
         if (c.mestre && row.cena !== c.alvo) throw new Http(400, 'Abra a cena do token antes de removê-lo');
         await rest('PATCH', `tokens?mesa=eq.${m}&id=eq.${id}`, { corpo: { cena: null }, prefer: 'return=minimal' });
@@ -285,12 +287,53 @@ export default async function handler(req, res) {
       if (!idOk(cenaId, 2, 8) || cenaId === row.cena) throw new Http(400, 'Escolha outra cena');
       const [destino] = await rest('GET', `cenas?mesa=eq.${m}&id=eq.${cenaId}&select=id,cena`);
       if (!destino) throw new Http(404, 'Cena não encontrada');
-      const novoId = rid(6), copia = { ...t, id: novoId };
+      const novoId = rid(6), copia = { ...t, id: novoId }; delete copia.par; delete copia.repouso;
       copia.x = num(t.x, 0, destino.cena.w, destino.cena.w / 2);
       copia.y = num(t.y, 0, destino.cena.h, destino.cena.h / 2);
       await rest('POST', 'tokens', { corpo: { mesa: m, id: novoId, cena: cenaId, dados: copia }, prefer: 'return=minimal' });
       await bump(m);
       return res.status(200).json({ ok: true, id: novoId });
+    }
+
+    /* ---------- formas ligadas (como o "Flip!" do Owlbear): dois tokens ligados, só um aparece; "trocar" revezia entre eles ---------- */
+    if (['tokenLigar', 'tokenTrocar', 'tokenDesligar'].includes(acao)) {
+      const ida = txt(b.id, 12).toLowerCase(), idb = txt(b.com, 12).toLowerCase();
+      if (!idOk(ida, 1, 12)) throw new Http(404, 'Token não encontrado');
+      const [ra] = await rest('GET', `tokens?mesa=eq.${m}&id=eq.${ida}&select=cena,dados`);
+      if (!ra) throw new Http(404, 'Token não encontrado');
+      const dono = (r) => c.mestre || (r.dados.dono === c.pid && r.cena === c.ativa);
+      if (!dono(ra)) throw new Http(403, 'Esse token não é seu');
+      if (!c.mestre && acao !== 'tokenTrocar' && cena.ligJogadores === false) throw new Http(403, 'O mestre desligou a ligação de tokens para jogadores');
+      const grava = (id, dados, extra = {}) => rest('PATCH', `tokens?mesa=eq.${m}&id=eq.${id}`, { corpo: { dados, ...extra }, prefer: 'return=minimal' });
+      if (acao === 'tokenLigar') {
+        if (!idOk(idb, 1, 12) || idb === ida) throw new Http(400, 'Escolha outro token para ligar');
+        const [rb] = await rest('GET', `tokens?mesa=eq.${m}&id=eq.${idb}&select=cena,dados`);
+        if (!rb) throw new Http(404, 'Token não encontrado');
+        if (!dono(rb)) throw new Http(403, 'Esse token não é seu');
+        if (ra.cena === null || rb.cena === null || ra.cena !== rb.cena) throw new Http(400, 'Os dois tokens precisam estar na mesma cena');
+        if (ra.dados.par || rb.dados.par) throw new Http(400, 'Um deles já está ligado a outro token');
+        await grava(ida, { ...ra.dados, par: idb });
+        await grava(idb, { ...rb.dados, par: ida, repouso: true, x: ra.dados.x, y: ra.dados.y });
+      } else {
+        if (!ra.dados.par) throw new Http(400, 'Esse token não está ligado a nenhum outro');
+        const [rb] = await rest('GET', `tokens?mesa=eq.${m}&id=eq.${ra.dados.par}&select=cena,dados`);
+        if (!rb) { const d = { ...ra.dados }; delete d.par; delete d.repouso; await grava(ida, d); }
+        else if (acao === 'tokenDesligar') {
+          const da = { ...ra.dados }, db = { ...rb.dados }; delete da.par; delete db.par;
+          const [ativo, rep] = ra.dados.repouso ? [rb, ra] : [ra, rb], dAtivo = ativo === ra ? da : db, dRep = rep === ra ? da : db;
+          delete dAtivo.repouso; delete dRep.repouso;
+          await grava(ativo === ra ? ida : ra.dados.par, dAtivo);
+          await grava(rep === ra ? ida : ra.dados.par, dRep, { cena: null }); // a forma que estava em repouso vai para a biblioteca
+        } else { // trocar: a outra forma assume a posição desta
+          const [ativo, rep] = ra.dados.repouso ? [rb, ra] : [ra, rb], idAtivo = ativo === ra ? ida : ra.dados.par, idRep = rep === ra ? ida : ra.dados.par;
+          const dRep = { ...rep.dados, x: ativo.dados.x, y: ativo.dados.y, vis: ativo.dados.vis };
+          delete dRep.repouso;
+          await grava(idRep, dRep);
+          await grava(idAtivo, { ...ativo.dados, repouso: true });
+        }
+      }
+      await bump(m);
+      return res.status(200).json({ ok: true });
     }
 
     if (['tokenMove', 'tokenEdit', 'tokenDel', 'tokenImg'].includes(acao)) {
@@ -303,6 +346,10 @@ export default async function handler(req, res) {
       const cenaTk = (await rest('GET', `cenas?mesa=eq.${m}&id=eq.${row.cena}&select=cena`))[0]?.cena || cena;
 
       if (acao === 'tokenDel') {
+        if (t.par) { // a outra forma não pode ficar escondida para sempre: ela assume o lugar deste
+          const [irm] = await rest('GET', `tokens?mesa=eq.${m}&id=eq.${t.par}&select=cena,dados`);
+          if (irm) { const d = { ...irm.dados }; delete d.par; if (d.repouso) { d.x = t.x; d.y = t.y; d.vis = t.vis; } delete d.repouso; await rest('PATCH', `tokens?mesa=eq.${m}&id=eq.${t.par}`, { corpo: { dados: d }, prefer: 'return=minimal' }); }
+        }
         await rest('DELETE', `tokens?mesa=eq.${m}&id=eq.${id}`);
         await bump(m);
         await apagaImagemTokenSeOrfa(m, t.img);
@@ -317,6 +364,7 @@ export default async function handler(req, res) {
         await apagaImagemTokenSeOrfa(m, t.img);
         return res.status(200).json({ ok: true });
       }
+      if (t.repouso && (acao === 'tokenMove' || (acao === 'tokenEdit' && (b.x !== undefined || b.y !== undefined)))) throw new Http(400, 'Esta forma está em repouso; troque de forma primeiro');
       const n = acao === 'tokenMove' ? validaToken({ x: b.x, y: b.y }, cenaTk, t) : validaToken(b, cenaTk, t);
       if ((acao === 'tokenMove' || (acao === 'tokenEdit' && (n.x !== t.x || n.y !== t.y))) && cenaTk.bloqueia !== false && !caminhoLivre(cenaTk.paredes, t.x, t.y, n.x, n.y, !t.dono && t.bloqueiaPortas === false)) throw new Http(400, 'Caminho bloqueado por parede ou porta fechada');
       if (acao === 'tokenEdit' && c.mestre) {
@@ -340,6 +388,8 @@ export default async function handler(req, res) {
       };
       if (b.nevoa !== undefined) nova.nevoa = !!b.nevoa;
       if (b.bloqueia !== undefined) nova.bloqueia = !!b.bloqueia;
+      if (b.ordemY !== undefined) { if (b.ordemY) nova.ordemY = true; else delete nova.ordemY; } // token mais abaixo fica na frente (jogos isométricos)
+      if (b.ligJogadores !== undefined) { if (b.ligJogadores) delete nova.ligJogadores; else nova.ligJogadores = false; } // jogadores podem ligar/desligar formas
       if (b.clima !== undefined) { const cl = validaClima(b.clima); if (cl) nova.clima = cl; else delete nova.clima; } // null = sem clima
       await rest('PATCH', `cenas?mesa=eq.${m}&id=eq.${c.alvo}`, { corpo: { cena: nova }, prefer: 'return=minimal' });
       await bump(m);

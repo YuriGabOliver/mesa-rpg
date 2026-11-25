@@ -228,7 +228,7 @@ function abrirMenuToken(id, x, y, origem = null) {
   $('#tm-titulo').textContent = tk.nome || 'Token';
   const cenas = souMestre() ? (E.est.cenas || []).filter((c) => c.id !== E.est.vendo) : [];
   $('#tm-cena').innerHTML = cenas.map((c) => '<option value="' + esc(c.id) + '">' + esc(c.nome) + '</option>').join('');
-  $('#tm-duplicar-wrap').hidden = !cenas.length;
+  $('#tm-duplicar-wrap').hidden = !cenas.length; $('#tm-trocar').hidden = !tk.par; $('#tm-guardar').hidden = !!tk.par;
   const menu = $('#token-menu');
   menu.hidden = false;
   menu.style.left = Math.max(8, Math.min(Number(x) || 8, innerWidth - 340)) + 'px';
@@ -254,6 +254,8 @@ $('#tm-duplicar').addEventListener('click', () => {
   if (!id || !cenaId) return;
   fechaMenuToken(); agir('tokenDuplicar', { id, cenaId });
 });
+$('#tm-espelhar').addEventListener('click', () => { const id = E.menuTk, tk = E.est && E.est.tokens.find((t) => t.id === id); if (!tk) return; fechaMenuToken(); agir('tokenEdit', { id, espelho: !tk.espelho }); });
+$('#tm-trocar').addEventListener('click', () => { const id = E.menuTk; if (!id) return; fechaMenuToken(); agir('tokenTrocar', { id }); });
 $('#tm-guardar').addEventListener('click', () => {
   const id = E.menuTk;
   if (!id) return;
@@ -306,7 +308,7 @@ function aplica(j) {
   mapa.setMestre(j.papel === 'mestre');
   if (j.papel === 'mestre' && j.vendo !== E.vendo) { E.vendo = j.vendo; ls.set('ml.vendo.' + E.m, j.vendo); }
   if (!ant || ant.cena.img !== j.cena.img || antChave !== chave) mapa.setImagem(urlImagem(j.cena.img));
-  mapa.setCena(j.cena); mapa.setElementos(j.elementos || []); mapa.setTokens(j.tokens); mapa.setNevoa(j.nevoa); clima.define(j.cena.clima || null);
+  mapa.setCena(j.cena); mapa.setElementos(j.elementos || []); mapa.setTokens(j.tokens.filter((t) => !t.repouso)); mapa.setNevoa(j.nevoa); clima.define(j.cena.clima || null);
   if (E.menuTk && !j.tokens.some((t) => t.id === E.menuTk)) fechaMenuToken();
   if (antChave && antChave !== chave) {
     E.sel = null; mapa.selecionar(null, false); mapa.centralizar();
@@ -441,6 +443,8 @@ function desenhaPainel() {
     <div class="sec"><h3>Grade</h3>
       <label class="linha"><input type="checkbox" id="c-grade"> Mostrar grade</label>
       <label class="linha"><input type="checkbox" id="c-snap"> Encaixar tokens na casa</label>
+      <label class="linha"><input type="checkbox" id="c-ordemy"> Ordem por altura (quem está mais embaixo fica na frente)</label>
+      <label class="linha"><input type="checkbox" id="c-ligjog"> Jogadores podem ligar e desligar formas dos seus tokens</label>
       <label>Tamanho da casa: <b id="c-size-v"></b> px<input type="range" id="c-size" min="20" max="200"></label>
       <label>Metros por casa<input type="number" id="c-m" min="0.1" step="0.1"></label></div>
     <div class="sec"><h3>Clima</h3>
@@ -490,12 +494,16 @@ function atualizaPainel(forca) {
       const u = urlToken(t), mini = u ? `<img src="${esc(u)}" alt="">` : `<span class="dot" style="background:${esc(t.cor)}"></span>`;
       const luzes = Array.from({ length: 21 }, (_, n) => `<option value="${n}" ${(t.visao || 0) === n ? 'selected' : ''}>${n ? 'Luz ' + n : 'Sem luz'}</option>`).join('');
       const donos = souMestre() ? `<option value="">Mestre</option>${j.jog.filter((x) => !x.mestre).map((x) => `<option value="${esc(x.id)}" ${x.id === t.dono ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}` : '';
-      return `<li data-id="${esc(t.id)}" class="${E.sel === t.id ? 'sel' : ''} ${E.tkAberto.has(t.id) ? 'aberto' : ''}">
+      const irmao = t.par ? j.tokens.find((x) => x.id === t.par) : null;
+      const candidatos = !t.par && meu ? j.tokens.filter((x) => x.id !== t.id && !x.par && (souMestre() || x.dono === E.pid)) : [];
+      const podeLigar = souMestre() || j.cena.ligJogadores !== false;
+      return `<li data-id="${esc(t.id)}" class="${E.sel === t.id ? 'sel' : ''} ${E.tkAberto.has(t.id) ? 'aberto' : ''} ${t.repouso ? 'repouso' : ''}">
         <div class="tk-linha">
           ${meu ? `<label class="thumb" title="Trocar a imagem do token">${mini}<input type="file" class="timg" accept="image/*" hidden></label><input class="n" maxlength="12" value="${esc(t.nome)}">`
           : `<span class="thumb">${mini}</span><span class="ro">${esc(t.nome)}</span><small>${esc(nomeDono)}</small>`}
           ${souMestre() ? `<button class="b mini" data-act="vis" title="Mostrar/ocultar para jogadores">${t.vis === false ? 'Oculto' : 'Visível'}</button>` : ''}
-          <button class="b mini" data-act="ir" title="Ir até o token">Ir</button>
+          ${t.par && meu ? `<button class="b mini troca" data-act="trocar" title="${t.repouso ? 'Usar esta forma' : 'Trocar para ' + esc(irmao ? irmao.nome : 'a outra forma')}">⇄ ${t.repouso ? 'Usar' : 'Trocar'}</button>` : ''}
+          ${t.repouso ? '' : '<button class="b mini" data-act="ir" title="Ir até o token">Ir</button>'}
           ${meu ? '<button class="b mini" data-act="mais" title="Mais ajustes do token" aria-label="Mais ajustes">⋯</button>' : ''}
         </div>
         ${meu ? `<div class="tk-mais">
@@ -504,6 +512,9 @@ function atualizaPainel(forca) {
           ${souMestre() ? `<label>Dono <select class="dono">${donos}</select></label>
           <label>Luz <select class="visao" title="Revela a névoa em volta do token">${luzes}</select></label>
           ${!t.dono ? `<button class="b mini ${t.bloqueiaPortas === false ? '' : 'on'}" data-act="portas" title="Alternar bloqueio por portas neste NPC">Portas: ${t.bloqueiaPortas === false ? 'ignora portas' : 'bloqueiam'}</button>` : ''}` : ''}
+          <button class="b mini ${t.espelho ? 'on' : ''}" data-act="espelhar" title="Vira a imagem para o outro lado">Espelhar</button>
+          ${t.par ? `<span class="lig-info">Ligado a <b>${esc(irmao ? irmao.nome : '?')}</b></span>${podeLigar ? '<button class="b mini" data-act="desligar" title="Separar as duas formas; a que está em repouso vai para a biblioteca">Desligar</button>' : ''}`
+            : candidatos.length && podeLigar ? `<span class="lig-linha"><select class="lig-alvo" aria-label="Ligar a outro token">${candidatos.map((x) => `<option value="${esc(x.id)}">${esc(x.nome)}</option>`).join('')}</select><button class="b mini" data-act="ligar" title="Liga os dois tokens: só um aparece e você troca entre eles">Ligar</button></span>` : ''}
           ${t.img ? '<button class="b mini" data-act="rmimg" title="Tirar a imagem">Sem img</button>' : ''}
           <button class="b mini" data-act="menu" title="Duplicar ou guardar">Ações</button>
         </div>` : ''}</li>`;
@@ -527,6 +538,7 @@ function atualizaPainel(forca) {
       ${x.id === j.ativa ? '' : '<button class="b mini" data-act="puxar">Puxar jogadores</button><button class="b mini" data-act="cdel" title="Excluir cena">✕</button>'}</li>`).join('');
   } else if (E.aba === 'mapa') {
     const g = j.cena.grade;
+    $('#c-ordemy').checked = !!j.cena.ordemY; $('#c-ligjog').checked = j.cena.ligJogadores !== false;
     $('#c-grade').checked = g.on; $('#c-snap').checked = g.snap; $('#c-size').value = g.size; $('#c-size-v').textContent = g.size;
     if (document.activeElement !== $('#c-m')) $('#c-m').value = g.m;
     $('#c-nevoa').checked = j.cena.nevoa; const pw=j.cena.paredes||[], np=pw.filter(x=>x.t).length; $('#c-bloqueia').checked=j.cena.bloqueia!==false; $('#pw-info').textContent=pw.length?`${pw.length-np} parede(s), ${np} porta(s)`:'Nenhuma parede nesta cena.';
@@ -537,7 +549,7 @@ function atualizaPainel(forca) {
   } else if (E.aba === 'iniciativa') {
     const atual = j.iniciativa;
     const form = $('#iniciativa-form');
-    if (form && souMestre()) { const rascunho = new Map([...form.querySelectorAll('[data-ini-id]')].map((x) => [x.dataset.iniId, { marcado: x.checked, valor: $(`[data-ini-valor="${CSS.escape(x.dataset.iniId)}"]`, form)?.value }])); form.innerHTML = j.tokens.map((t) => { const salvo = atual?.turnos?.find((x) => x.id === t.id), d = rascunho.get(t.id); return `<label class="ini-row"><input type="checkbox" data-ini-id="${esc(t.id)}" ${salvo || (!atual && (d ? d.marcado : true)) ? 'checked' : ''}><span>${esc(t.nome)}</span><input class="ini-val" type="number" data-ini-valor="${esc(t.id)}" value="${salvo?.valor ?? d?.valor ?? ''}" placeholder="Iniciativa" aria-label="Iniciativa de ${esc(t.nome)}"></label>`; }).join('') || '<p class="dica">Adicione tokens à cena para iniciar o combate.</p>'; }
+    if (form && souMestre()) { const rascunho = new Map([...form.querySelectorAll('[data-ini-id]')].map((x) => [x.dataset.iniId, { marcado: x.checked, valor: $(`[data-ini-valor="${CSS.escape(x.dataset.iniId)}"]`, form)?.value }])); form.innerHTML = j.tokens.filter((t) => !t.repouso).map((t) => { const salvo = atual?.turnos?.find((x) => x.id === t.id), d = rascunho.get(t.id); return `<label class="ini-row"><input type="checkbox" data-ini-id="${esc(t.id)}" ${salvo || (!atual && (d ? d.marcado : true)) ? 'checked' : ''}><span>${esc(t.nome)}</span><input class="ini-val" type="number" data-ini-valor="${esc(t.id)}" value="${salvo?.valor ?? d?.valor ?? ''}" placeholder="Iniciativa" aria-label="Iniciativa de ${esc(t.nome)}"></label>`; }).join('') || '<p class="dica">Adicione tokens à cena para iniciar o combate.</p>'; }
     const lista = $('#iniciativa-atual');
     if (lista) lista.innerHTML = atual?.turnos?.length ? `<h3>Rodada ${Number(atual.rodada) || 1}</h3><ol class="ini-lista">${atual.turnos.map((t, i) => `<li class="${i === atual.ativo ? 'ini-ativo' : ''}"><b>${esc(t.nome)}</b><span>${Number(t.valor)}</span>${i === atual.ativo ? '<span class="tag verde">Agora</span>' : ''}</li>`).join('')}</ol>${souMestre() ? '<div class="f-add"><button class="b prim" data-act="ini-proximo">Próximo turno</button><button class="b" data-act="ini-limpar">Encerrar combate</button></div>' : ''}` : '<p class="dica">Nenhum combate ativo.</p>';
   } else if (E.aba === 'chat') {
@@ -630,6 +642,10 @@ painel.addEventListener('click', async (e) => {
     if (t.dataset.act === 'el-mais' || t.dataset.act === 'el-menos') { const k = t.dataset.act === 'el-mais' ? 1.15 : 1 / 1.15; return agir('elementoEdit', { id, w: Math.round(elemento.w * k), h: Math.round(elemento.h * k) }); }
   }
   if (t.dataset.act === 'mais') { li.classList.toggle('aberto'); if (li.classList.contains('aberto')) E.tkAberto.add(id); else E.tkAberto.delete(id); return; }
+  if (t.dataset.act === 'trocar') return agir('tokenTrocar', { id });
+  if (t.dataset.act === 'desligar') return agir('tokenDesligar', { id });
+  if (t.dataset.act === 'ligar') { const alvo = li.querySelector('.lig-alvo'); return alvo && alvo.value ? agir('tokenLigar', { id, com: alvo.value }) : undefined; }
+  if (t.dataset.act === 'espelhar' && tk) return agir('tokenEdit', { id, espelho: !tk.espelho });
   if (t.dataset.act === 'menu') {
     const r = t.getBoundingClientRect(); return abrirMenuToken(id, r.right + 8, r.top, t);
   }
@@ -673,6 +689,8 @@ painel.addEventListener('change', async (e) => {
     return agir('cena', { grade: { on: $('#c-grade').checked, snap: $('#c-snap').checked, size: +$('#c-size').value, m: +$('#c-m').value || 1.5 } });
   }
   if (el.id === 'c-bloqueia') return agir('cena', { bloqueia: el.checked });
+  if (el.id === 'c-ordemy') return agir('cena', { ordemY: el.checked });
+  if (el.id === 'c-ligjog') return agir('cena', { ligJogadores: el.checked });
   if (el.id === 'c-nevoa') return agir('cena', { nevoa: el.checked, grade: E.est.cena.grade });
 });
 painel.addEventListener('input', (e) => {
