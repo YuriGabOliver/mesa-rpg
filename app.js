@@ -247,9 +247,17 @@ function agendar() {
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden && E.m) poll(true); });
 
+function falaChat(texto) {
+  if (!('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') { toast('Este navegador não oferece leitura em voz alta.'); return false; }
+  const sintetizador = window.speechSynthesis, fala = new SpeechSynthesisUtterance(texto), vozes = sintetizador.getVoices();
+  fala.lang = 'pt-BR'; fala.voice = vozes.find((v) => /^pt[-_]br$/i.test(v.lang)) || vozes.find((v) => /^pt[-_]/i.test(v.lang)) || null;
+  fala.onerror = () => toast('A voz falhou. Confira as vozes e o volume do navegador.');
+  sintetizador.resume(); sintetizador.speak(fala); return true;
+}
+
 function aplica(j) {
   const ant = E.est;
-  if (ant && Array.isArray(j.chat) && ls.get('ml.chat.tts', false) && 'speechSynthesis' in window) { const vistos = new Set((ant.chat || []).map((x) => x.id)); for (const msg of j.chat) if (!vistos.has(msg.id) && msg.pid !== E.pid) { const fala = new SpeechSynthesisUtterance(`${msg.nome}: ${msg.texto}`); fala.lang = 'pt-BR'; speechSynthesis.speak(fala); } }
+  if (ant && Array.isArray(j.chat) && ls.get('ml.chat.tts', false)) { const vistos = new Set((ant.chat || []).map((x) => x.id)); for (const msg of j.chat) if (!vistos.has(msg.id) && msg.pid !== E.pid) falaChat(`${msg.nome}: ${msg.texto}`); }
   if(ant&&j.log&&j.log.length){const last=Math.max(0,...ant.log.map(x=>Number(x.t)||0));const nr=j.log.filter(x=>Number(x.t)>last).sort((a,b)=>a.t-b.t);if(nr.length)mostraRolagem(nr[nr.length-1]);}
   E.est = j; E.v = j.v; E.ultMud = Date.now();
   const chave = j.vendo || j.cenaId, antChave = ant && (ant.vendo || ant.cenaId);
@@ -326,7 +334,7 @@ function desenhaPainel() {
   else if (E.aba === 'musica') c.innerHTML = musica.html(souMestre());
   else if (E.aba === 'efeitos') c.innerHTML = efeitos.html(souMestre());
   else if (E.aba === 'iniciativa') c.innerHTML = `<div class="sec"><h3>Iniciativa do combate</h3><p class="dica">Marque os tokens na cena e informe os resultados. A lista fica em ordem decrescente.</p>${souMestre() ? `<div id="iniciativa-form"></div><div class="f-add"><button class="b prim" data-act="ini-salvar">Iniciar / atualizar</button></div>` : ''}<div id="iniciativa-atual"></div></div>`;
-  else if (E.aba === 'chat') c.innerHTML = `<div class="sec"><h3>Chat da mesa</h3><label class="linha"><input type="checkbox" id="chat-tts"> Ler mensagens recebidas em voz alta</label><div id="chat-lista" class="chat-lista" aria-live="polite"></div><form id="chat-form"><select id="chat-ident" aria-label="Enviar como"></select><textarea id="chat-texto" maxlength="600" rows="3" placeholder="Escreva uma mensagem…" required></textarea><button class="b prim">Enviar</button></form><p class="dica">Texto de voz usa a voz em português disponível no navegador.</p></div>`;
+  else if (E.aba === 'chat') c.innerHTML = `<div class="sec"><h3>Chat da mesa</h3><label class="linha"><input type="checkbox" id="chat-tts"> Ler mensagens recebidas em voz alta</label><button class="b mini" type="button" data-act="chat-voz-teste">Testar voz</button><div id="chat-lista" class="chat-lista" aria-live="polite"></div><form id="chat-form"><select id="chat-ident" aria-label="Enviar como"></select><textarea id="chat-texto" maxlength="600" rows="3" placeholder="Escreva uma mensagem…" required></textarea><button class="b prim">Enviar</button></form><p class="dica">A leitura usa uma voz em português instalada no navegador. Mensagens enviadas por você não são lidas em voz alta.</p></div>`;
   else if (E.aba === 'elementos') c.innerHTML = `<div class="sec"><h3>Adicionar elemento visual</h3><input id="el-nome" maxlength="40" placeholder="Nome (ex.: baú, árvore)"><label class="b" style="display:block;text-align:center">Escolher imagem<input type="file" id="el-arquivo" accept="image/*" hidden></label><span id="el-arq-nome" class="dica"></span><button class="b prim" data-act="el-add">Adicionar ao mapa</button><p class="dica">A imagem mantém sua proporção original. Arraste no mapa para posicionar.</p></div><div class="sec"><h3>Elementos nesta cena</h3><ul id="lista-elementos"></ul></div>`;
   else if (E.aba === 'cenas') c.innerHTML = `
     <div class="sec"><h3>Cenas</h3>
@@ -481,6 +489,7 @@ painel.addEventListener('click', async (e) => {
   if (t.id === 'b-pw-limpar') return confirm('Apagar todas as paredes e portas desta cena?') ? agir('paredeLimpar') : undefined;
   if (t.id === 'b-cobrir') return agir('nevoaCobrir');
   if (t.id === 'b-desfaz') return agir('nevoaDesfazer');
+  if (t.dataset.act === 'chat-voz-teste') return falaChat('Teste de voz do chat da mesa.');
   if (t.dataset.act === 'ini-salvar') {
     const turnos = [...document.querySelectorAll('#iniciativa-form [data-ini-id]:checked')].map((x) => { const i = $(`[data-ini-valor="${CSS.escape(x.dataset.iniId)}"]`, $('#iniciativa-form')); return { id: x.dataset.iniId, valor: i?.value.trim() === '' ? null : Number(i.value) }; });
     if (turnos.some((x) => x.valor === null || !Number.isFinite(x.valor))) return toast('Preencha a iniciativa de cada token selecionado.');
@@ -540,7 +549,7 @@ painel.addEventListener('change', async (e) => {
   if (lc && el.classList.contains('cn')) return agir('cenaRenomear', { cenaId: lc.dataset.cid, nome: el.value });
   if (el.id === 'a-img') { $('#a-img-nome').textContent = el.files[0] ? el.files[0].name.slice(0, 18) : ''; return; }
   if (el.id === 'el-arquivo') { $('#el-arq-nome').textContent = el.files[0]?.name || ''; return; }
-  if (el.id === 'chat-tts') { ls.set('ml.chat.tts', el.checked); if (!el.checked && 'speechSynthesis' in window) speechSynthesis.cancel(); return; }
+  if (el.id === 'chat-tts') { if (el.checked && !('speechSynthesis' in window)) { el.checked = false; return toast('Este navegador não oferece leitura em voz alta.'); } ls.set('ml.chat.tts', el.checked); if (!el.checked && 'speechSynthesis' in window) speechSynthesis.cancel(); return; }
   if (li) {
     const id = li.dataset.id;
     if (el.classList.contains('n')) agir('tokenEdit', { id, nome: el.value });
