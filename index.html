@@ -63,7 +63,9 @@
         <div class="id-pill">
           <div class="id-txt"><b id="t-nome"></b><span class="id-sub"><span id="t-papel" class="tag"></span><span id="t-cena" class="tag cena" hidden></span><span id="t-off" class="tag aviso" hidden>sem conexão</span></span></div>
           <button class="b prim mini" id="t-conv" title="Convidar jogadores">Convidar</button>
+          <button class="b mini" id="t-sair" title="Sair da mesa" aria-label="Sair da mesa"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H5v16h5M15 8l4 4-4 4M19 12H9"/></svg></button>
         </div>
+        <div id="hud-jog" class="jog-card" hidden></div>
         <button class="b" id="t-som" hidden></button>
       </div>
       <div id="faixa" hidden><span id="faixa-txt"></span><button class="b prim mini" id="faixa-puxar">Puxar jogadores para cá</button></div>
@@ -82,7 +84,8 @@
       </div>
       <button class="b" id="tm-espelhar">Espelhar imagem</button>
       <button class="b" id="tm-trocar" hidden>Trocar de forma</button>
-      <button class="b" id="tm-guardar">Remover do mapa e guardar na biblioteca</button>
+      <button class="b" id="tm-guardar">Tirar do mapa e guardar na biblioteca</button>
+      <button class="b perigo" id="tm-excluir">Excluir token de vez</button>
     </section>
     <nav id="rail" aria-label="Seções da mesa"></nav>
     <aside id="painel" class="fechado" aria-label="Painel da mesa">

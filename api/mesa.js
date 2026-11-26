@@ -234,6 +234,14 @@ export default async function handler(req, res) {
     const { m, cena } = c;
     const filtroCena = `mesa=eq.${m}&cena=eq.${c.alvo}`;
 
+    if (acao === 'presenca') { // batida de "estou aqui": só usada quando o tempo real não está disponível
+      const [jg] = await rest('GET', `jogadores?mesa=eq.${m}&id=eq.${c.pid}&select=dados`);
+      if (!jg) throw new Http(403, 'Entre novamente na mesa');
+      await rest('PATCH', `jogadores?mesa=eq.${m}&id=eq.${c.pid}`, { corpo: { dados: { ...jg.dados, t: Date.now() } }, prefer: 'return=minimal' });
+      await bump(m);
+      return res.status(200).json({ ok: true });
+    }
+
     if (acao === 'entrar') {
       const nome = txt(b.pnome, 20) || 'Jogador';
       await rest('POST', 'jogadores?on_conflict=mesa,id', { corpo: { mesa: m, id: c.pid, dados: { nome, mestre: c.mestre, t: Date.now() } }, prefer: 'resolution=merge-duplicates,return=minimal' });
@@ -342,8 +350,9 @@ export default async function handler(req, res) {
       const [row] = await rest('GET', `tokens?mesa=eq.${m}&id=eq.${id}&select=cena,dados`);
       if (!row) throw new Http(404, 'Token não encontrado');
       const t = row.dados;
-      if (!c.mestre && (t.dono !== c.pid || row.cena !== c.ativa)) throw new Http(403, 'Esse token não é seu');
-      const cenaTk = (await rest('GET', `cenas?mesa=eq.${m}&id=eq.${row.cena}&select=cena`))[0]?.cena || cena;
+      const guardadoMeu = acao === 'tokenDel' && row.cena === null && t.dono === c.pid; // o dono pode apagar de vez um token seu que está guardado
+      if (!c.mestre && !guardadoMeu && (t.dono !== c.pid || row.cena !== c.ativa)) throw new Http(403, 'Esse token não é seu');
+      const cenaTk = row.cena == null ? cena : ((await rest('GET', `cenas?mesa=eq.${m}&id=eq.${row.cena}&select=cena`))[0]?.cena || cena);
 
       if (acao === 'tokenDel') {
         if (t.par) { // a outra forma não pode ficar escondida para sempre: ela assume o lugar deste

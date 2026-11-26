@@ -41,6 +41,36 @@ async function carregaSupabase() {
   for (const v of SB_VERSOES) { try { await carregaScript(`https://cdn.jsdelivr.net/npm/@supabase/supabase-js@${v}/dist/umd/supabase.js`); if (window.supabase) return true; } catch { /* tenta a próxima */ } }
   return false;
 }
+/* ---------- quem está na mesa (presença em tempo real) ---------- */
+// Com Realtime: cada aparelho anuncia "estou aqui" no canal e todos veem na hora quem entra e sai.
+// Sem Realtime: a cada ~30 s o aparelho avisa o servidor, e quem avisou há menos de ~70 s conta como presente.
+E.hb = 30000; E.limiteOnline = 70000; E.online = null;
+function anunciaPresenca() { if (!E.canal || !E.rtOk) return; try { const r = E.canal.track({ pid: E.pid, vis: !document.hidden }); if (r && r.catch) r.catch(() => {}); } catch { /* ok */ } }
+function aplicaPresenca(estado) { // estado: { pid: [ { vis } ] }
+  const novo = {}; for (const [k, v] of Object.entries(estado || {})) novo[k] = { vis: !(Array.isArray(v) ? v : []).every((x) => x && x.vis === false) };
+  E.online = novo; sincronizaJog();
+}
+document.addEventListener('visibilitychange', anunciaPresenca);
+const corDe = (id) => { let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) % 360; return `hsl(${h} 55% 45%)`; };
+function sincronizaJog() {
+  const j = E.est, el = $('#hud-jog'); if (!j || !el) return;
+  const agora = Date.now() + (E.skew || 0), lista = (j.jog || []).slice();
+  const estado = (x) => {
+    if (x.id === E.pid) return document.hidden ? 'seg' : 'on';
+    if (E.rtOk && E.online) return E.online[x.id] ? (E.online[x.id].vis ? 'on' : 'seg') : 'off';
+    return x.t && agora - x.t < E.limiteOnline ? 'on' : 'off';
+  };
+  lista.sort((a, b) => (b.mestre ? 1 : 0) - (a.mestre ? 1 : 0) || String(a.nome).localeCompare(String(b.nome)));
+  const itens = lista.map((x) => ({ x, st: estado(x) })), on = itens.filter((i) => i.st !== 'off').length;
+  const aberto = E.jogAberto !== undefined ? E.jogAberto : innerWidth > 700;
+  const html = `<button class="jog-topo" aria-expanded="${aberto}" id="jog-alterna"><span class="jog-ponto on"></span><b>Na mesa</b><span class="jog-cont">${on} de ${itens.length}</span><span class="jog-seta">${aberto ? '▾' : '▸'}</span></button>`
+    + (aberto ? `<ul>${itens.map(({ x, st }) => `<li class="${st}" title="${st === 'on' ? 'Na mesa agora' : st === 'seg' ? 'Está com a aba em segundo plano' : 'Fora da mesa'}"><i class="av" style="background:${corDe(x.id)}">${esc(String(x.nome || '?').trim().charAt(0).toUpperCase() || '?')}</i><span class="jn">${esc(x.nome)}${x.id === E.pid ? ' (você)' : ''}</span>${x.mestre ? '<small class="tag">Mestre</small>' : ''}<span class="jog-ponto ${st}"></span></li>`).join('')}</ul>` : '');
+  if (html !== E.jogHtml) { E.jogHtml = html; el.innerHTML = html; }
+  el.hidden = !itens.length;
+}
+$('#hud-jog').addEventListener('click', (e) => { if (e.target.closest('#jog-alterna')) { E.jogAberto = !(E.jogAberto !== undefined ? E.jogAberto : innerWidth > 700); E.jogHtml = null; sincronizaJog(); } });
+window.__presenca = aplicaPresenca; // testes
+setInterval(() => { if (E.m && !E.rtOk) sincronizaJog(); }, 8000); // sem tempo real, reavalia quem sumiu
 function fechaRealtime() { E.rtOk = false; if (E.canal && E.sb) { try { E.sb.removeChannel(E.canal); } catch { /* ok */ } } E.canal = null; }
 async function iniciaRealtime(m) {
   fechaRealtime();
@@ -48,10 +78,11 @@ async function iniciaRealtime(m) {
   try {
     E.sb = E.sb || window.supabase.createClient(CFG.url, CFG.anon, { auth: { persistSession: false, autoRefreshToken: false } });
     let deb = null;
-    E.canal = E.sb.channel(`mesa-${m}`, { config: { broadcast: { self: false } } })
+    E.canal = E.sb.channel(`mesa-${m}`, { config: { broadcast: { self: false }, presence: { key: E.pid } } })
+      .on('presence', { event: 'sync' }, () => { try { aplicaPresenca(E.canal.presenceState()); } catch { /* ok */ } })
       .on('broadcast', { event: 'arrasto' }, (m) => recebeArrasto(m && m.payload))
       .on('broadcast', { event: 'mudou' }, () => { clearTimeout(deb); deb = setTimeout(() => poll(true), 30); })
-      .subscribe((status) => { E.rtOk = status === 'SUBSCRIBED'; if (E.rtOk) poll(true); atualizaSync(); });
+      .subscribe((status) => { E.rtOk = status === 'SUBSCRIBED'; if (E.rtOk) { poll(true); anunciaPresenca(); } atualizaSync(); sincronizaJog(); });
   } catch { E.rtOk = false; }
 }
 /* ---------- arrasto ao vivo: quem mexe num token manda a posição ~16x/s direto pelos outros (Realtime), sem passar pelo servidor ---------- */
@@ -180,7 +211,7 @@ async function abreMesa(m, mk) {
   } catch (e) { sair(e.message); }
 }
 function sair(msg) {
-  clearTimeout(E.timer); fechaRealtime(); E.m = null; E.est = null; musica.estado(null); musica.fecha(); efeitos.estado([]); if (clima) clima.define(null);
+  clearTimeout(E.timer); fechaRealtime(); E.m = null; E.est = null; E.online = null; E.jogHtml = null; E.hbUlt = 0; $('#hud-jog').hidden = true; musica.estado(null); musica.fecha(); efeitos.estado([]); if (clima) clima.define(null);
   mostraHome(msg);
 }
 
@@ -256,6 +287,13 @@ $('#tm-duplicar').addEventListener('click', () => {
 });
 $('#tm-espelhar').addEventListener('click', () => { const id = E.menuTk, tk = E.est && E.est.tokens.find((t) => t.id === id); if (!tk) return; fechaMenuToken(); agir('tokenEdit', { id, espelho: !tk.espelho }); });
 $('#tm-trocar').addEventListener('click', () => { const id = E.menuTk; if (!id) return; fechaMenuToken(); agir('tokenTrocar', { id }); });
+const apagaToken = (id) => { const tk = E.est && E.est.tokens.concat(E.est.biblioteca || []).find((t) => t.id === id); if (!tk) return; if (confirm(`Excluir “${tk.nome}” de vez? Isso não dá para desfazer${tk.par ? ' (a outra forma ligada continua)' : ''}.`)) agir('tokenDel', { id }); };
+$('#tm-excluir').addEventListener('click', () => { const id = E.menuTk; fechaMenuToken(); if (id) apagaToken(id); });
+document.addEventListener('keydown', (e) => { // Delete com um token escolhido no mapa
+  if (e.key !== 'Delete' || !E.sel || !E.est || !$('#excluir-modal').hidden) return;
+  const el = document.activeElement; if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+  const tk = E.est.tokens.find((t) => t.id === E.sel); if (tk && (souMestre() || tk.dono === E.pid)) apagaToken(tk.id);
+});
 $('#tm-guardar').addEventListener('click', () => {
   const id = E.menuTk;
   if (!id) return;
@@ -321,6 +359,9 @@ function aplica(j) {
   $('#tool-nevoa').hidden = j.papel !== 'mestre'; $('#tool-parede').hidden = j.papel !== 'mestre';
   atualizaFaixa();
   if (!ant || ant.papel !== j.papel) desenhaPainel(); else { atualizaPainel(); sincronizaHud(); }
+  if (j.agora) E.skew = j.agora - Date.now();
+  sincronizaJog();
+  if (!E.rtOk && Date.now() - (E.hbUlt || 0) > E.hb) { E.hbUlt = Date.now(); api('presenca', {}).catch(() => {}); }
 }
 function atualizaFaixa() {
   const j = E.est, f = $('#faixa'), longe = !!j && j.papel === 'mestre' && j.vendo !== j.ativa;
@@ -349,6 +390,7 @@ $('#tools-nevoa').addEventListener('click', (e) => {
 $('#n-raio').addEventListener('input', (e) => mapa.setNevoaFerr({ raio: +e.target.value }));
 function alternaPainel(forca) { E.painel = forca === undefined ? !E.painel : forca; $('#painel').classList.toggle('fechado', !E.painel); sincronizaHud(); }
 $('#painel-fechar').onclick = () => alternaPainel(false);
+$('#t-sair').onclick = () => { if (confirm('Sair da mesa? Você pode voltar depois pelo link.')) sair(); };
 $('#t-conv').onclick = () => { E.aba = 'mesa'; desenhaPainel(); alternaPainel(true); };
 $('#z-mais').onclick = () => mapa.zoomEm(mapa.c.clientWidth / 2, mapa.c.clientHeight / 2, 1.25);
 $('#z-menos').onclick = () => mapa.zoomEm(mapa.c.clientWidth / 2, mapa.c.clientHeight / 2, 1 / 1.25);
@@ -528,7 +570,8 @@ function atualizaPainel(forca) {
         ? '<button class="b mini" data-act="colocar">Colocar aqui</button>'
         : t.cena !== cenaAtual && souMestre()
           ? '<button class="b mini" data-act="dup-cena">Duplicar aqui</button>' : '';
-      return '<li data-id="' + esc(t.id) + '"><span class="thumb">' + mini + '</span><span class="lib-nome">' + esc(t.nome) + '</span><small class="tag">' + esc(status) + '</small>' + acao + '</li>';
+      const apagar = (souMestre() || t.dono === E.pid) ? '<button class="b mini perigo-s" data-act="del" title="Excluir de vez">Excluir</button>' : '';
+      return '<li data-id="' + esc(t.id) + '"><span class="thumb">' + mini + '</span><span class="lib-nome">' + esc(t.nome) + '</span><small class="tag">' + esc(status) + '</small>' + acao + apagar + '</li>';
     }).join('') || '<li class="dica">Biblioteca vazia.</li>';
   } else if (E.aba === 'cenas') {
     $('#lista-cenas').innerHTML = (j.cenas || []).map((x) => `<li data-cid="${esc(x.id)}" class="${x.id === j.vendo ? 'vendo' : ''}">
@@ -654,7 +697,7 @@ painel.addEventListener('click', async (e) => {
     return agir('tokenColocar', { id, x: p.x, y: p.y });
   }
   if (t.dataset.act === 'dup-cena' && tk) return agir('tokenDuplicar', { id, cenaId: E.est.vendo });
-  if (t.dataset.act === 'del') agir('tokenDel', { id });
+  if (t.dataset.act === 'del') apagaToken(id);
   else if (t.dataset.act === 'rmimg') agir('tokenImg', { id, dados: '' });
   else if (t.dataset.act === 'vis') agir('tokenEdit', { id, vis: tk.vis === false });
   else if (t.dataset.act === 'portas' && souMestre() && tk && !tk.dono) agir('tokenEdit', { id, bloqueiaPortas: tk.bloqueiaPortas === false });
