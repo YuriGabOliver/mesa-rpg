@@ -46,8 +46,35 @@
       <div id="tools" role="toolbar" aria-label="Ferramentas do mapa">
         <button class="b ferr on" data-f="mover" title="Mover mapa e tokens"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg><span>Mover</span></button>
         <button class="b ferr" data-f="regua" title="Medir distância"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17 17 3l4 4L7 21z"/><path d="m7 13 2 2M10 10l2 2M13 7l2 2"/></svg><span>Régua</span></button>
+        <button class="b ferr" data-f="selecionar" id="tool-sel" hidden title="Selecionar elementos (várias de uma vez)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h4M10 4h4M16 4h4M4 20h4M10 20h4M16 20h4M4 8v4M4 14v4M20 8v4M20 14v4"/></svg><span>Selecionar</span></button>
+        <button class="b ferr" data-f="desenho" id="tool-dese" title="Desenhar no mapa"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 7l3 3"/></svg><span>Desenhar</span></button>
         <button class="b ferr" data-f="nevoa" id="tool-nevoa" hidden title="Revelar ou esconder a névoa"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 18h11a4 4 0 0 0 .6-7.95 5.5 5.5 0 0 0-10.7-1.3A4.7 4.7 0 0 0 6.5 18z"/></svg><span>Névoa</span></button>
         <button class="b ferr" data-f="parede" id="tool-parede" hidden title="Desenhar paredes e portas"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v14H3zM3 12h18M9 5v7M15 12v7"/></svg><span>Paredes</span></button>
+      </div>
+      <div id="tools-regua" hidden>
+        <button class="b on" data-rf="linha">Linha</button><button class="b" data-rf="quadrado">Quadrado</button><button class="b" data-rf="circulo">Círculo</button><button class="b" data-rf="cone">Cone</button><button class="b" data-rf="rajada">Rajada</button>
+        <label class="raio" id="r-larg-wrap" hidden>Largura <select id="r-larg"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+        <span class="sep"></span>
+        <span class="raio">Grade:</span><button class="b on" data-rs="livre">Livre</button><button class="b" data-rs="centro">Centro</button><button class="b" data-rs="canto">Canto</button>
+        <span class="sep"></span>
+        <button class="b on" data-rt="inst">Instantâneo</button><button class="b" data-rt="perm">Permanente</button>
+        <label class="raio"><input type="checkbox" id="r-mostrar" checked> Mostrar aos outros</label>
+        <label class="raio" id="r-passo-wrap" title="Cada toque cria um ponto; no PC você também pode clicar com o botão direito durante o arrasto"><input type="checkbox" id="r-passo"> Ponto a ponto</label><button class="b" id="r-limpa">Limpar</button>
+      </div>
+      <div id="tools-sel" hidden>
+        <span class="raio" id="s-cont">Nada selecionado</span>
+        <button class="b" id="s-dup">Duplicar</button><button class="b" id="s-copia">Copiar</button><button class="b" id="s-cola">Colar</button><button class="b" id="s-trava">Travar</button><button class="b perigo-s" id="s-del">Excluir</button>
+        <span class="sep"></span>
+        <select id="s-cena" aria-label="Cena de destino"></select><button class="b" id="s-paracena">Copiar p/ cena</button>
+        <span class="raio" id="s-dica" style="flex-basis:100%;text-align:center">Arraste para selecionar vários. Shift soma. Ctrl+C / Ctrl+V / Delete funcionam.</span>
+      </div>
+      <div id="tools-dese" hidden>
+        <button class="b on" data-dm="livre">Mão livre</button><button class="b" data-dm="linha">Linha</button><button class="b" data-dm="rect">Retângulo</button><button class="b" data-dm="elipse">Elipse</button><button class="b" data-dm="borracha">Borracha</button>
+        <span class="sep"></span>
+        <input type="color" id="d-cor" value="#ff3b30" aria-label="Cor">
+        <label class="raio">Espessura <input type="range" id="d-esp" min="1" max="30" value="4"></label>
+        <label class="raio">Opacidade <input type="range" id="d-op" min="10" max="100" value="100"></label>
+        <button class="b" id="d-desfaz">Desfazer meu último</button><button class="b perigo-s" id="d-limpa" hidden>Limpar desenhos</button>
       </div>
       <div id="tools-parede" hidden>
         <button class="b on" data-pm="parede">Parede</button><button class="b" data-pm="porta">Porta</button><button class="b" data-pm="abrir" title="Clique para abrir/fechar; clique duplo para trancar/destrancar">Abrir/fechar</button><button class="b" data-pm="apagar">Apagar</button><span class="sep"></span><span id="p-dica" class="dica">Desenho livre; clique duplo numa porta para trancar/destrancar.</span>

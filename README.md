@@ -5,6 +5,14 @@ O mestre cria a mesa, sobe um mapa e manda o link; os jogadores entram pelo celu
 
 Projeto **independente**. Usa **Supabase** (banco, imagens e tempo real) e **Vercel** (site e API).
 
+## O que tem na versão 0.12
+
+- **Selecionar** (só mestre): arraste para selecionar vários elementos (Shift soma). Duplicar, Copiar/Colar (Ctrl+C / Ctrl+V, também em outra cena), Copiar para cena, Travar (L) e Excluir (Delete).
+- **Travar elementos**: ninguém move, redimensiona ou remove um elemento travado, nem o mestre, até destravar. Vale no servidor.
+- **Régua nova**: Linha, Quadrado, Círculo, Cone e Rajada; ajuste na grade (Livre / Centro / Canto); Instantâneo ou Permanente; Mostrar aos outros (liga/desliga); pontos fixos com botão direito (ou "Ponto a ponto") com distância acumulada. Esc limpa.
+- **Desenhar** (todos): mão livre, linha, retângulo, elipse, borracha, cor, espessura e opacidade. Cada um apaga os seus; só o mestre usa "Limpar desenhos".
+- Novo arquivo `ferramentas.js`. Sem mudança de banco.
+
 ## O que tem na versão 0.7
 
 - Central de efeitos e sons de fundo simultâneos à música; várias faixas podem tocar em paralelo. Biblioteca fica neste navegador e cada pessoa controla seu próprio volume.

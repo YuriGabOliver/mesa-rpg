@@ -1,5 +1,6 @@
 // Motor do mapa: canvas 2D puro (sem bibliotecas). Pan, zoom, pinça, grade, tokens (com imagem), névoa e régua.
 import { bloqueiam, caminhoLivre, distSeg, visibilidade } from './geo.js';
+import { extras } from './ferramentas.js';
 const SUPORTA_FILTRO =typeof CanvasRenderingContext2D !== 'undefined' && 'filter' in CanvasRenderingContext2D.prototype;
 const NEVOA_COR = '#050403';
 const normOp = (o) => (Array.isArray(o) ? { t: 'r', k: 'rect', x: o[0], y: o[1], w: o[2], h: o[3] } : o); // formato antigo
@@ -15,13 +16,15 @@ export class Mapa {
     this.fogA = document.createElement('canvas'); this.fogB = document.createElement('canvas'); this.fogInfo = null;
     this.imgs = new Map(); this.fogSujo = true; this.sujo = true; this.dpr = 1;
     this.ultimoToque = { id: null, t: 0 }; this.regua = null; this.previa = null; this.primeiraVez = true;
+    this.selEl = new Set(); this.marq = null; this.reguaCfg = { forma: 'linha', snap: 'livre', tempo: 'inst', mostrar: true, larg: 1 }; this.reguasFixas = []; this.reguasRemotas = new Map();
+    this.deseCfg = { modo: 'livre', cor: '#ff3b30', esp: 4, op: 1 }; this.dese = null;
     this.parede = { modo: 'parede' }; this.pw = null; this.bloq = []; this.pendentePorta = null; this.remotos = new Map(); this.tUlt = performance.now(); // névoa dinâmica: ferramenta de paredes e o que bloqueia a visão
     new ResizeObserver(() => this.redimensiona()).observe(canvas.parentElement);
     this.eventos(); this.redimensiona();
     const laco = (agora) => { this.passoRemotos(agora || performance.now()); if (this.sujo) { this.sujo = false; this.desenha(); } requestAnimationFrame(laco); };
     requestAnimationFrame(laco);
   }
-  get arrastando() { return !!this.acao && (this.acao.tipo === 'token' || this.acao.tipo === 'elemento'); }
+  get arrastando() { return !!this.acao && (this.acao.tipo === 'token' || this.acao.tipo === 'elemento' || this.acao.tipo === 'grupo'); }
   redimensiona() {
     const p = this.c.parentElement, r = p.getBoundingClientRect();
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -31,8 +34,8 @@ export class Mapa {
     if (this.primeiraVez && r.width > 50) { this.centralizar(); this.primeiraVez = false; }
     this.sujo = true;
   }
-  setMestre(b) { this.mestre = b; if (!b && (this.ferr === 'nevoa' || this.ferr === 'parede')) this.setFerramenta('mover'); this.sujo = true; }
-  setFerramenta(f) { this.ferr = f; this.regua = null; this.previa = null; this.pw = null; this.sujo = true; }
+  setMestre(b) { this.mestre = b; if (!b && (this.ferr === 'nevoa' || this.ferr === 'parede' || this.ferr === 'selecionar')) this.setFerramenta('mover'); this.sujo = true; }
+  setFerramenta(f) { this.ferr = f; this.regua = null; this.previa = null; this.pw = null; this.marq = null; this.dese = null; if (f !== 'selecionar') this.limpaSelecao(); this.sujo = true; }
   setParedeFerr(o) { this.parede = { ...this.parede, ...o }; this.pw = null; this.sujo = true; }
   setNevoaFerr(o) { this.nevoaFerr = { ...this.nevoaFerr, ...o }; this.previa = null; this.sujo = true; }
   setCena(cena) {
@@ -74,7 +77,9 @@ export class Mapa {
     this.fogSujo = true; this.sujo = true;
   }
   setNevoa(n) { this.nevoa = n; this.fogSujo = true; this.sujo = true; }
-  setElementos(e) { const velhos = new Map(this.elementos.map((k) => [k.id, k])); this.elementos = Array.isArray(e) ? e.map((x) => { const v = this.remotos.has(x.id) && velhos.get(x.id); return v ? { ...x, x: v.x, y: v.y } : { ...x }; }) : []; this.sujo = true; }
+  setElementos(e) {
+    const _ids = new Set((Array.isArray(e) ? e : []).map((x) => x.id)); let _mud = false; for (const i of [...this.selEl]) if (!_ids.has(i)) { this.selEl.delete(i); _mud = true; } if (_mud) this.avisaSel();
+    const velhos = new Map(this.elementos.map((k) => [k.id, k])); this.elementos = Array.isArray(e) ? e.map((x) => { const v = this.remotos.has(x.id) && velhos.get(x.id); return v ? { ...x, x: v.x, y: v.y } : { ...x }; }) : []; this.sujo = true; }
   selecionar(id, avisa = true) { if (this.sel === id) return; this.sel = id; this.sujo = true; if (avisa && this.cb.onSelecionar) this.cb.onSelecionar(id); }
   centralizar() {
     if (!this.W) return;
@@ -145,8 +150,8 @@ export class Mapa {
     c.addEventListener('contextmenu', (e) => e.preventDefault());
     c.addEventListener('wheel', (e) => { e.preventDefault(); this.zoomEm(e.offsetX, e.offsetY, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
     c.addEventListener('contextmenu', (e) => {
+      e.preventDefault(); if (this.ferr === 'regua' && this.regua) { this.pontoRegua(); return; }
       const p = this.mundo(e.offsetX, e.offsetY), t = this.hit(p);
-      e.preventDefault();
       if (!t) { const el = this.hitElemento(p); if (el && this.mestre && this.cb.onElementoContext) this.cb.onElementoContext(el.id, e.clientX, e.clientY); return; }
       if (this.cb.onTokenContext) this.cb.onTokenContext(t.id, e.clientX, e.clientY);
     });
@@ -156,7 +161,23 @@ export class Mapa {
       if (this.ptrs.size > 2) return;
       const p = this.mundo(e.offsetX, e.offsetY);
       if (e.button === 1 || e.button === 2) { this.acao = { tipo: 'pan', sx: e.offsetX, sy: e.offsetY, vx: this.view.x, vy: this.view.y }; return; } // botão do meio/direito sempre move o mapa
-      if (this.ferr === 'regua') { this.acao = { tipo: 'regua' }; this.regua = { a: p, b: p }; }
+      if (this.ferr === 'regua' && this.reguaCfg.passo && this.reguaCfg.forma === 'linha' && this.regua) { const q = this.snapR(p); this.regua.pts.push({ ...this.regua.b }); this.regua.b = q; this.acao = { tipo: 'regua' }; this.emiteRegua(false); }
+      else if (this.ferr === 'regua') { const q = this.snapR(p); this.acao = { tipo: 'regua' }; this.regua = { forma: this.reguaCfg.forma, pts: [q], b: q, larg: this.reguaCfg.larg }; this.emiteRegua(false); }
+      else if (this.ferr === 'selecionar' && this.mestre) {
+        const el = this.hitElemento(p), soma = e.shiftKey || e.ctrlKey || e.metaKey;
+        if (el) {
+          if (soma && this.selEl.has(el.id)) { this.selEl.delete(el.id); this.avisaSel(); this.acao = { tipo: 'nada' }; }
+          else {
+            if (!this.selEl.has(el.id)) { if (!soma) this.selEl.clear(); this.selEl.add(el.id); this.avisaSel(); }
+            const orig = new Map(this.elementos.filter((x) => this.selEl.has(x.id)).map((x) => [x.id, { x: x.x, y: x.y }]));
+            this.acao = { tipo: 'grupo', p0: p, orig, mexeu: false };
+          }
+        } else { this.marq = { a: p, b: p }; this.acao = { tipo: 'marquee', soma, sx: e.offsetX, sy: e.offsetY }; }
+      }
+      else if (this.ferr === 'desenho') {
+        if (this.deseCfg.modo === 'borracha') { const d = this.hitDesenho(p); if (d && this.cb.onDesenhoDel) this.cb.onDesenhoDel(d); this.acao = { tipo: 'nada' }; }
+        else { this.acao = { tipo: 'desenho', pts: [p] }; this.dese = this.montaDesenho([p], p); }
+      }
       else if (this.ferr === 'nevoa' && this.mestre) { this.acao = { tipo: 'nevoa' }; this.previa = { a: p, b: p, pts: [p] }; }
       else if (this.ferr === 'parede' && this.mestre) {
         const m = this.parede.modo;
@@ -165,6 +186,7 @@ export class Mapa {
       }
       else {
         const el = this.hitElemento(p), t = this.hit(p);
+        if (!t && el && this.mestre && this.ferr === 'mover' && el.lock) { if (this.cb.aviso) this.cb.aviso('Elemento travado. Destrave para mover.'); this.acao = { tipo: 'pan', sx: e.offsetX, sy: e.offsetY, vx: this.view.x, vy: this.view.y }; return; }
         if (!t && el && this.mestre && this.ferr === 'mover') { this.acao = { tipo: 'elemento', id: el.id, dx: p.x - el.x, dy: p.y - el.y, mexeu: false }; return; }
         if (t) {
           this.selecionar(t.id);
@@ -199,7 +221,17 @@ export class Mapa {
         }
       } else if (a.tipo === 'elemento') { const el = this.elementos.find((k) => k.id === a.id), p = this.mundo(e.offsetX, e.offsetY); if (el) { el.x = Math.min(this.cena.w, Math.max(0, p.x - a.dx)); el.y = Math.min(this.cena.h, Math.max(0, p.y - a.dy)); a.mexeu = true; if (this.cb.onArrastar) this.cb.onArrastar('e', el.id, el.x, el.y); } }
       else if (a.tipo === 'parede' && this.pw) this.pw.b = this.snapParede(this.mundo(e.offsetX, e.offsetY));
-      else if (a.tipo === 'regua') this.regua.b = this.mundo(e.offsetX, e.offsetY);
+      else if (a.tipo === 'regua') { this.regua.b = this.snapR(this.mundo(e.offsetX, e.offsetY)); const agora = performance.now(); if (agora - (this.tRegua || 0) > 70) { this.tRegua = agora; this.emiteRegua(false); } }
+      else if (a.tipo === 'grupo') {
+        const p = this.mundo(e.offsetX, e.offsetY), dx = p.x - a.p0.x, dy = p.y - a.p0.y;
+        if (a.mexeu || Math.hypot(dx, dy) * this.view.s > 4) { a.mexeu = true; for (const el of this.elementos) { const o = a.orig.get(el.id); if (o && !el.lock) { el.x = Math.min(this.cena.w, Math.max(0, o.x + dx)); el.y = Math.min(this.cena.h, Math.max(0, o.y + dy)); } } }
+      }
+      else if (a.tipo === 'marquee' && this.marq) this.marq.b = this.mundo(e.offsetX, e.offsetY);
+      else if (a.tipo === 'desenho') {
+        const p = this.mundo(e.offsetX, e.offsetY), u = a.pts[a.pts.length - 1];
+        if (this.deseCfg.modo === 'livre') { if (Math.hypot(p.x - u.x, p.y - u.y) * this.view.s > 2.5) a.pts.push(p); this.dese = this.montaDesenho(a.pts, p); }
+        else this.dese = this.montaDesenho([a.pts[0]], p);
+      }
       else if (a.tipo === 'nevoa' && this.previa) {
         const p = this.mundo(e.offsetX, e.offsetY); this.previa.b = p;
         const u = this.previa.pts[this.previa.pts.length - 1];
@@ -222,6 +254,14 @@ export class Mapa {
           } else { t.x = q.x; t.y = q.y; this.fogSujo = true; if (this.cb.onMover) this.cb.onMover(t.id, t.x, t.y); }
           if (this.cb.onArrastar) this.cb.onArrastar('t', t.id, t.x, t.y, true);
         }
+      } else if (a.tipo === 'regua') { this.fechaRegua();
+      } else if (a.tipo === 'grupo') {
+        if (a.mexeu) { const ids = [...a.orig.keys()], p0 = a.orig.get(ids[0]), el0 = this.elementos.find((x) => x.id === ids[0]); const movel = this.elementos.find((x) => a.orig.has(x.id) && !x.lock); if (movel && this.cb.onLote) { const o = a.orig.get(movel.id); this.cb.onLote({ op: 'mover', ids, dx: Math.round(movel.x - o.x), dy: Math.round(movel.y - o.y) }); } void p0; void el0; }
+      } else if (a.tipo === 'marquee' && this.marq) {
+        const { a: ma, b: mb } = this.marq; this.marq = null;
+        if (Math.hypot(e.offsetX - a.sx, e.offsetY - a.sy) < 4) { if (!a.soma) this.limpaSelecao(); } else this.selecionaRetangulo(ma, mb, a.soma);
+      } else if (a.tipo === 'desenho' && this.dese) {
+        const d = this.dese; this.dese = null; if (this.cb.onDesenho) this.cb.onDesenho(d);
       } else if (a.tipo === 'parede' && this.pw) {
         const { a: pa, b: pb } = this.pw, m = this.parede.modo; this.pw = null;
         const arrastou = Math.hypot(e.offsetX - a.sx, e.offsetY - a.sy) >= 6;
@@ -248,7 +288,7 @@ export class Mapa {
     const p = pts.filter((_, i) => i % passo === 0 || i === pts.length - 1).map((q) => [R(q.x), R(q.y)]);
     return { t, k: 'path', r: f.raio, p };
   }
-  cancelaAcao() { this.previa = null; this.pw = null; this.acao = null; }
+  cancelaAcao() { this.previa = null; this.pw = null; this.marq = null; this.dese = null; this.regua = null; this.acao = null; }
   medePinca() {
     const [a, b] = [...this.ptrs.values()];
     return { d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 };
@@ -307,7 +347,7 @@ export class Mapa {
   desenhaElementos() {
     const g = this.g, k = 1 / this.view.s;
     for (const e of this.elementos) { const im = this.elementoImg(e); if (!im) continue; g.globalAlpha = e.vis === false && this.mestre ? .45 : 1; g.drawImage(im, e.x - e.w / 2, e.y - e.h / 2, e.w, e.h); }
-    g.globalAlpha = 1;
+    g.globalAlpha = 1; this.desenhaDesenhos();
   }
   desenha() {
     const g = this.g, { w, h, grade } = this.cena, v = this.view, d = this.dpr, k = 1 / v.s;
@@ -329,16 +369,7 @@ export class Mapa {
     };
     if (this.mestre) { fog(); this.desenhaElementos(); this.desenhaTokens(); this.desenhaParedes(); } else { this.desenhaParedes(); this.desenhaElementos(); this.desenhaTokens(); fog(); }
     if (this.previa) this.desenhaPrevia();
-    if (this.regua) {
-      const { a, b } = this.regua, dist = Math.hypot(b.x - a.x, b.y - a.y) / grade.size;
-      g.strokeStyle = '#ffd34d'; g.fillStyle = '#ffd34d'; g.lineWidth = 3 * k; g.setLineDash([10 * k, 6 * k]);
-      g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke(); g.setLineDash([]);
-      g.beginPath(); g.arc(a.x, a.y, 5 * k, 0, 7); g.fill(); g.beginPath(); g.arc(b.x, b.y, 5 * k, 0, 7); g.fill();
-      const txt = `${dist.toFixed(1).replace('.', ',')} casas · ${(dist * grade.m).toFixed(1).replace('.', ',')} m`;
-      g.font = `bold ${15 * k}px system-ui,sans-serif`; const tw = g.measureText(txt).width;
-      g.fillStyle = 'rgba(0,0,0,.7)'; g.fillRect(b.x + 10 * k, b.y + 8 * k, tw + 12 * k, 24 * k);
-      g.fillStyle = '#ffd34d'; g.textBaseline = 'middle'; g.fillText(txt, b.x + 16 * k, b.y + 20 * k);
-    }
+    this.desenhaSelecao(); this.desenhaReguas();
   }
   // mestre vê tudo (paredes fracas; fortes com a ferramenta ligada); jogadores só veem portas fechadas, por baixo da névoa
   desenhaParedes() {
@@ -394,3 +425,4 @@ export class Mapa {
     g.textAlign = 'start';
   }
 }
+Object.assign(Mapa.prototype, extras);

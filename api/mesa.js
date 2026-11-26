@@ -11,7 +11,7 @@ const num = (v, a, b, d) => { v = Number(v); return Number.isFinite(v) ? Math.mi
 const txt = (v, n) => String(v ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, n);
 const igual = (a, b) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 const COR = /^#[0-9a-fA-F]{6}$/;
-const MAX_NEVOA = 300, MAX_LOG = 50, MAX_CENAS = 30, MAX_CHAT = 100, MAX_EFEITOS = 16, MAX_ELEMENTOS = 100;
+const MAX_NEVOA = 300, MAX_LOG = 50, MAX_CENAS = 30, MAX_CHAT = 100, MAX_EFEITOS = 16, MAX_ELEMENTOS = 100, MAX_DESENHOS = 300;
 const EXT = { 'image/webp': 'webp', 'image/jpeg': 'jpg', 'image/png': 'png' };
 const novoV = () => Date.now() * 1000 + Math.floor(Math.random() * 1000); // só precisa ser diferente a cada mudança
 const idOk = (x, min, max) => new RegExp(`^[a-z0-9]{${min},${max}}$`).test(String(x));
@@ -418,6 +418,68 @@ export default async function handler(req, res) {
     }
 
     /* ---------- névoa ---------- */
+    /* ---------- seleção em lote (mestre): mover, duplicar, colar de outra cena, travar, excluir ---------- */
+    if (acao === 'elementosLote') {
+      exigeMestre(c);
+      const lista = Array.isArray(cena.elementos) ? cena.elementos : [], op = txt(b.op, 10);
+      const ids = (Array.isArray(b.ids) ? b.ids : []).slice(0, MAX_ELEMENTOS).map((i) => txt(i, 12));
+      if (!ids.length) throw new Http(400, 'Nada selecionado');
+      const alvoCena = async (nova) => rest('PATCH', `cenas?mesa=eq.${m}&id=eq.${c.alvo}`, { corpo: { cena: { ...cena, ...nova } }, prefer: 'return=minimal' });
+      let afetados = 0, travados = 0;
+      if (op === 'mover') {
+        const dx = num(b.dx, -9000, 9000, 0), dy = num(b.dy, -9000, 9000, 0);
+        const nova = lista.map((x) => { if (!ids.includes(x.id)) return x; if (x.lock) { travados++; return x; } afetados++; return { ...x, x: num(x.x + dx, 0, cena.w, x.x), y: num(x.y + dy, 0, cena.h, x.y) }; });
+        await alvoCena({ elementos: nova });
+      } else if (op === 'lock') {
+        const val = !!b.lock; const nova = lista.map((x) => { if (!ids.includes(x.id)) return x; afetados++; return { ...x, lock: val }; });
+        await alvoCena({ elementos: nova });
+      } else if (op === 'del') {
+        const apagar = lista.filter((x) => ids.includes(x.id) && !x.lock); travados = lista.filter((x) => ids.includes(x.id) && x.lock).length; afetados = apagar.length;
+        const nova = lista.filter((x) => !apagar.includes(x));
+        await alvoCena({ elementos: nova });
+        const cenas = await rest('GET', `cenas?mesa=eq.${m}&select=cena`);
+        for (const img of new Set(apagar.map((x) => x.img))) if (!cenas.some((z) => (z.cena.elementos || []).some((e) => e.img === img))) await apagarImagem(`${m}/${img}`);
+      } else if (op === 'paracena') { // copia a seleção desta cena para outra
+        const d = txt(b.destino, 40), r = d ? await rest('GET', `cenas?mesa=eq.${m}&id=eq.${encodeURIComponent(d)}&select=cena`) : [];
+        if (!r.length) throw new Http(404, 'Cena de destino nao encontrada'); if (String(d) === String(c.alvo)) throw new Http(400, 'Escolha outra cena');
+        const dc = r[0].cena, dl = Array.isArray(dc.elementos) ? dc.elementos : [];
+        const copias = lista.filter((x) => ids.includes(x.id)).map((x) => ({ ...x, id: rid(6), lock: false, x: num(x.x, 0, dc.w, x.x), y: num(x.y, 0, dc.h, x.y) }));
+        if (dl.length + copias.length > MAX_ELEMENTOS) throw new Http(400, `Limite de ${MAX_ELEMENTOS} elementos na cena de destino`);
+        await rest('PATCH', `cenas?mesa=eq.${m}&id=eq.${encodeURIComponent(d)}`, { corpo: { cena: { ...dc, elementos: [...dl, ...copias] } }, prefer: 'return=minimal' });
+        afetados = copias.length;
+      } else if (op === 'dup' || op === 'colar') {
+        // dup: copia nesta cena (deslocada uma casa). colar: copia de outra cena (origem) para esta, na mesma posição
+        let fonte = lista, desloc = cena.grade.size;
+        if (op === 'colar') {
+          const o = txt(b.origem, 40); if (!o) throw new Http(400, 'Cena de origem ausente');
+          const r = await rest('GET', `cenas?mesa=eq.${m}&id=eq.${encodeURIComponent(o)}&select=cena`); if (!r.length) throw new Http(404, 'Cena de origem nao encontrada');
+          fonte = r[0].cena.elementos || []; desloc = String(o) === String(c.alvo) ? cena.grade.size : 0;
+        }
+        const copias = fonte.filter((x) => ids.includes(x.id)).map((x) => ({ ...x, id: rid(6), lock: false, x: num(x.x + desloc, 0, cena.w, x.x), y: num(x.y + desloc, 0, cena.h, x.y) }));
+        if (lista.length + copias.length > MAX_ELEMENTOS) throw new Http(400, `Limite de ${MAX_ELEMENTOS} elementos por cena`);
+        afetados = copias.length; await alvoCena({ elementos: [...lista, ...copias] });
+        await bump(m); return res.status(200).json({ ok: true, afetados, novos: copias.map((x) => x.id) });
+      } else throw new Http(400, 'Operacao invalida');
+      await bump(m); return res.status(200).json({ ok: true, afetados, travados });
+    }
+    /* ---------- desenhos livres (todos desenham; só o mestre limpa tudo) ---------- */
+    if (['desenhoAdd', 'desenhoDel', 'desenhoLimpar'].includes(acao)) {
+      const lista = Array.isArray(cena.desenhos) ? cena.desenhos : [];
+      const grava = async (d) => { const nc = { ...cena }; if (d.length) nc.desenhos = d; else delete nc.desenhos; await rest('PATCH', `cenas?mesa=eq.${m}&id=eq.${c.alvo}`, { corpo: { cena: nc }, prefer: 'return=minimal' }); await bump(m); };
+      if (acao === 'desenhoLimpar') { exigeMestre(c); await grava([]); return res.status(200).json({ ok: true }); }
+      if (acao === 'desenhoDel') {
+        const id = txt(b.id, 12), d = lista.find((x) => x.id === id); if (!d) throw new Http(404, 'Desenho nao encontrado');
+        if (!c.mestre && d.dono !== c.pid) throw new Http(403, 'Voce so apaga os seus desenhos');
+        await grava(lista.filter((x) => x.id !== id)); return res.status(200).json({ ok: true });
+      }
+      const k = txt(b.k, 8); if (!['livre', 'linha', 'rect', 'elipse'].includes(k)) throw new Http(400, 'Tipo de desenho invalido');
+      const bruto = Array.isArray(b.p) ? b.p : []; const esperado = k === 'livre' ? null : 4;
+      if (esperado ? bruto.length !== esperado : (bruto.length < 2 || bruto.length > 400 || bruto.length % 2)) throw new Http(400, 'Pontos invalidos');
+      const p = bruto.map((v, i) => Math.round(num(v, k === 'elipse' || k === 'rect' ? (i > 1 ? 0 : -50) : 0, i % 2 ? cena.h : cena.w, 0)));
+      const cor = /^#[0-9a-f]{6}$/i.test(String(b.cor || '')) ? String(b.cor).toLowerCase() : '#ff3b30';
+      const d = { id: rid(6), k, p, cor, esp: Math.round(num(b.esp, 1, 40, 4)), op: Math.round(num(b.op, 0.1, 1, 1) * 100) / 100, dono: c.pid };
+      await grava([...lista, d].slice(-MAX_DESENHOS)); return res.status(200).json({ ok: true, id: d.id });
+    }
     /* Recursos sincronizados: elementos graficos, iniciativa, chat e efeitos. */
     if (['elementoAdd', 'elementoMove', 'elementoEdit', 'elementoDel'].includes(acao)) {
       exigeMestre(c);
@@ -433,7 +495,9 @@ export default async function handler(req, res) {
       }
       const alvo = lista.find((x) => x.id === id);
       if (!alvo) throw new Http(404, 'Elemento nao encontrado');
-      const nova = acao === 'elementoDel' ? lista.filter((x) => x.id !== id) : lista.map((x) => x.id !== id ? x : acao === 'elementoMove' ? { ...x, x: num(b.x, 0, cena.w, x.x), y: num(b.y, 0, cena.h, x.y) } : { ...x, vis: b.vis === undefined ? x.vis : !!b.vis, w: num(b.w, 30, cena.w, x.w), h: num(b.h, 30, cena.h, x.h) });
+      const tocaLock = acao === 'elementoDel' || acao === 'elementoMove' || (acao === 'elementoEdit' && (b.w !== undefined || b.h !== undefined));
+      if (alvo.lock && tocaLock) throw new Http(409, 'Elemento travado. Destrave para mexer.');
+      const nova = acao === 'elementoDel' ? lista.filter((x) => x.id !== id) : lista.map((x) => x.id !== id ? x : acao === 'elementoMove' ? { ...x, x: num(b.x, 0, cena.w, x.x), y: num(b.y, 0, cena.h, x.y) } : { ...x, lock: b.lock === undefined ? x.lock : !!b.lock, vis: b.vis === undefined ? x.vis : !!b.vis, w: num(b.w, 30, cena.w, x.w), h: num(b.h, 30, cena.h, x.h) });
       await rest('PATCH', `cenas?mesa=eq.${m}&id=eq.${c.alvo}`, { corpo: { cena: { ...cena, elementos: nova } }, prefer: 'return=minimal' });
       await bump(m);
       if (acao === 'elementoDel') { const cenas = await rest('GET', `cenas?mesa=eq.${m}&select=cena`); if (!cenas.some((x) => (x.cena.elementos || []).some((e) => e.img === alvo.img))) await apagarImagem(`${m}/${alvo.img}`); }

@@ -81,6 +81,7 @@ async function iniciaRealtime(m) {
     E.canal = E.sb.channel(`mesa-${m}`, { config: { broadcast: { self: false }, presence: { key: E.pid } } })
       .on('presence', { event: 'sync' }, () => { try { aplicaPresenca(E.canal.presenceState()); } catch { /* ok */ } })
       .on('broadcast', { event: 'arrasto' }, (m) => recebeArrasto(m && m.payload))
+      .on('broadcast', { event: 'regua' }, (m) => recebeRegua(m && m.payload))
       .on('broadcast', { event: 'mudou' }, () => { clearTimeout(deb); deb = setTimeout(() => poll(true), 30); })
       .subscribe((status) => { E.rtOk = status === 'SUBSCRIBED'; if (E.rtOk) { poll(true); anunciaPresenca(); } atualizaSync(); sincronizaJog(); });
   } catch { E.rtOk = false; }
@@ -104,6 +105,21 @@ function recebeArrasto(p) {
   mapa.arrastoRemoto(p.t === 'e' ? 'e' : 't', p.id, p.x, p.y, p.fim);
 }
 window.__recebeArrasto = recebeArrasto;
+/* ---------- régua mostrada aos outros (só Realtime, nada vai para o banco) ---------- */
+let regUlt = 0;
+function enviaRegua(o) {
+  if (!E.rtOk || !E.canal) return;
+  const agora = performance.now(); if (!o.fim && !o.limpa && agora - regUlt < 60) return; regUlt = agora;
+  try { const r = E.canal.send({ type: 'broadcast', event: 'regua', payload: { ...o, pid: E.pid, nome: E.nome || '' } }); if (r && r.catch) r.catch(() => {}); } catch { /* ok */ }
+}
+function recebeRegua(p) {
+  if (!p || !mapa || p.pid === E.pid || typeof p.pid !== 'string') return;
+  if (p.limpa) return mapa.setReguaRemota(p.pid, { limpa: true });
+  const okPts = Array.isArray(p.pts) && p.pts.length <= 24 && p.pts.every((q) => Array.isArray(q) && Number.isFinite(q[0]) && Number.isFinite(q[1]));
+  if (!okPts || !Array.isArray(p.b) || !Number.isFinite(p.b[0]) || !Number.isFinite(p.b[1]) || !['linha', 'quadrado', 'circulo', 'cone', 'rajada'].includes(p.f)) return;
+  mapa.setReguaRemota(p.pid, { f: p.f, pts: p.pts, b: p.b, larg: Math.min(6, Math.max(1, Number(p.larg) || 1)), perm: !!p.perm, fim: !!p.fim, cor: corDe(p.pid), nome: String(p.nome || '').slice(0, 24) });
+}
+window.__recebeRegua = recebeRegua;
 function atualizaSync() { const el = $('#m-sync'); if (el) el.textContent = E.rtOk ? 'Sincronização: tempo real ativo.' : 'Sincronização: consulta periódica (alguns segundos de atraso).'; }
 
 /* ---------- utilidades ---------- */
@@ -221,6 +237,11 @@ function iniciaMapa() {
     onMover: (id, x, y) => { api('tokenMove', { id, x, y }).then(() => poll(true)).catch((e) => { toast(e.message); poll(true); }); },
     onArrastar: enviaArrasto,
     onMoverElemento: (id, x, y) => { agir('elementoMove', { id, x, y }); },
+    onRegua: enviaRegua,
+    onLote: (o) => agir('elementosLote', o),
+    onSelecaoEl: (ids) => { E.selEl = ids; atualizaSelUi(); },
+    onDesenho: (d) => agir('desenhoAdd', d),
+    onDesenhoDel: (d) => { if (!souMestre() && d.dono !== E.pid) return toast('Você só apaga os seus desenhos'); agir('desenhoDel', { id: d.id }); },
     onNevoa: (op) => agir('nevoaAdd', { ops: [op] }),
     onParede: (o) => { if (o.op === 'add') agir('paredeAdd', { segs: o.segs }); else if (o.op === 'del') agir('paredeDel', { id: o.id }); else if (o.op === 'tipo') agir('paredeTipo', { id: o.id }); else if (o.op === 'alterna') agir('portaAlterna', { id: o.id }); else if (o.op === 'tranca') agir('portaTrancar', { id: o.id }); },
     aviso: (m) => toast(m),
@@ -346,7 +367,7 @@ function aplica(j) {
   mapa.setMestre(j.papel === 'mestre');
   if (j.papel === 'mestre' && j.vendo !== E.vendo) { E.vendo = j.vendo; ls.set('ml.vendo.' + E.m, j.vendo); }
   if (!ant || ant.cena.img !== j.cena.img || antChave !== chave) mapa.setImagem(urlImagem(j.cena.img));
-  mapa.setCena(j.cena); mapa.setElementos(j.elementos || []); mapa.setTokens(j.tokens.filter((t) => !t.repouso)); mapa.setNevoa(j.nevoa); clima.define(j.cena.clima || null);
+  mapa.setCena(j.cena); mapa.setElementos(j.elementos || []); if (mapa.ferr === 'selecionar') atualizaSelUi(); mapa.setTokens(j.tokens.filter((t) => !t.repouso)); mapa.setNevoa(j.nevoa); clima.define(j.cena.clima || null);
   if (E.menuTk && !j.tokens.some((t) => t.id === E.menuTk)) fechaMenuToken();
   if (antChave && antChave !== chave) {
     E.sel = null; mapa.selecionar(null, false); mapa.centralizar();
@@ -356,7 +377,7 @@ function aplica(j) {
   $('#t-nome').textContent = j.nome;
   $('#t-papel').textContent = j.papel === 'mestre' ? 'Mestre' : 'Jogador';
   const tc = $('#t-cena'); tc.hidden = j.papel !== 'mestre'; if (!tc.hidden) tc.textContent = j.cenaNome;
-  $('#tool-nevoa').hidden = j.papel !== 'mestre'; $('#tool-parede').hidden = j.papel !== 'mestre';
+  $('#tool-nevoa').hidden = j.papel !== 'mestre'; $('#tool-sel').hidden = j.papel !== 'mestre'; $('#d-limpa').hidden = j.papel !== 'mestre'; $('#tool-parede').hidden = j.papel !== 'mestre';
   atualizaFaixa();
   if (!ant || ant.papel !== j.papel) desenhaPainel(); else { atualizaPainel(); sincronizaHud(); }
   if (j.agora) E.skew = j.agora - Date.now();
@@ -371,13 +392,74 @@ function atualizaFaixa() {
 $('#faixa-puxar').onclick = () => agir('cenaPuxar', { cenaId: E.est.vendo });
 
 /* ---------- barra de ferramentas ---------- */
-$('#tools').addEventListener('click', (e) => {
+const FAIXAS = { nevoa: '#tools-nevoa', parede: '#tools-parede', regua: '#tools-regua', selecionar: '#tools-sel', desenho: '#tools-dese' };
+function escolheFerr(f) {
+  mapa.setFerramenta(f);
+  document.querySelectorAll('#tools [data-f]').forEach((x) => x.classList.toggle('on', x.dataset.f === f));
+  mapa.c.style.cursor = f === 'mover' ? 'grab' : 'crosshair';
+  for (const [k, sel] of Object.entries(FAIXAS)) $(sel).hidden = k !== f;
+  if (f === 'selecionar') atualizaSelUi();
+}
+window.__ferr = escolheFerr;
+$('#tools').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b || !b.dataset.f) return; escolheFerr(b.dataset.f); });
+
+/* ---------- régua: formas, grade, tempo ---------- */
+const marcaGrupo = (sel, attr, val) => document.querySelectorAll(`${sel} [${attr}]`).forEach((x) => x.classList.toggle('on', x.getAttribute(attr) === val));
+$('#tools-regua').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
-  if (!b.dataset.f) return;
-  mapa.setFerramenta(b.dataset.f);
-  document.querySelectorAll('#tools [data-f]').forEach((x) => x.classList.toggle('on', x === b));
-  mapa.c.style.cursor = b.dataset.f === 'mover' ? 'grab' : 'crosshair';
-  $('#tools-nevoa').hidden = b.dataset.f !== 'nevoa'; $('#tools-parede').hidden = b.dataset.f !== 'parede';
+  if (b.dataset.rf) { mapa.setReguaCfg({ forma: b.dataset.rf }); marcaGrupo('#tools-regua', 'data-rf', b.dataset.rf); $('#r-larg-wrap').hidden = b.dataset.rf !== 'rajada'; $('#r-passo-wrap').hidden = b.dataset.rf !== 'linha'; }
+  else if (b.dataset.rs) { mapa.setReguaCfg({ snap: b.dataset.rs }); marcaGrupo('#tools-regua', 'data-rs', b.dataset.rs); }
+  else if (b.dataset.rt) { mapa.setReguaCfg({ tempo: b.dataset.rt }); marcaGrupo('#tools-regua', 'data-rt', b.dataset.rt); }
+  else if (b.id === 'r-limpa') mapa.limpaReguas();
+});
+$('#r-mostrar').addEventListener('change', (e) => mapa.setReguaCfg({ mostrar: e.target.checked }));
+$('#r-passo').addEventListener('change', (e) => mapa.setReguaCfg({ passo: e.target.checked }));
+$('#r-larg').addEventListener('change', (e) => mapa.setReguaCfg({ larg: Number(e.target.value) }));
+/* ---------- desenho ---------- */
+$('#tools-dese').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.dm) { mapa.setDeseCfg({ modo: b.dataset.dm }); marcaGrupo('#tools-dese', 'data-dm', b.dataset.dm); mapa.c.style.cursor = b.dataset.dm === 'borracha' ? 'pointer' : 'crosshair'; }
+  else if (b.id === 'd-desfaz') { const meus = ((E.est && E.est.cena.desenhos) || []).filter((d) => d.dono === E.pid); if (meus.length) agir('desenhoDel', { id: meus[meus.length - 1].id }); else toast('Você não tem desenhos nesta cena'); }
+  else if (b.id === 'd-limpa') { if (confirm('Apagar TODOS os desenhos desta cena?')) agir('desenhoLimpar', {}); }
+});
+$('#d-cor').addEventListener('input', (e) => mapa.setDeseCfg({ cor: e.target.value }));
+$('#d-esp').addEventListener('input', (e) => mapa.setDeseCfg({ esp: Number(e.target.value) }));
+$('#d-op').addEventListener('input', (e) => mapa.setDeseCfg({ op: Number(e.target.value) / 100 }));
+/* ---------- seleção de elementos ---------- */
+function elsSel() { return (E.selEl || []).map((id) => (E.est.elementos || []).find((x) => x.id === id)).filter(Boolean); }
+function atualizaSelUi() {
+  if (!E.est) return; const n = (E.selEl || []).length, ls_ = elsSel(), todosTrav = ls_.length && ls_.every((x) => x.lock);
+  $('#s-cont').textContent = n ? `${n} selecionado${n > 1 ? 's' : ''}` : 'Nada selecionado';
+  $('#s-trava').textContent = todosTrav ? 'Destravar' : 'Travar';
+  for (const id of ['s-dup', 's-copia', 's-trava', 's-del', 's-paracena']) $('#' + id).disabled = !n;
+  $('#s-cola').disabled = !E.clip;
+  const cur = $('#s-cena').value, cenas = (E.est.cenas || []).filter((c) => c.id !== E.est.vendo);
+  const html = cenas.map((c) => `<option value="${esc(c.id)}">${esc(c.nome)}</option>`).join('');
+  if ($('#s-cena').dataset.h !== html) { $('#s-cena').innerHTML = html; $('#s-cena').dataset.h = html; if ([...$('#s-cena').options].some((o) => o.value === cur)) $('#s-cena').value = cur; }
+  $('#s-cena').hidden = $('#s-paracena').hidden = !cenas.length;
+}
+function acaoSel(id) {
+  const ids = E.selEl || []; if (!E.est) return;
+  if (id === 's-cola') { if (!E.clip) return toast('Nada copiado'); return agir('elementosLote', { op: 'colar', origem: E.clip.origem, ids: E.clip.ids }).then(() => toast('Colado nesta cena')); }
+  if (!ids.length) return;
+  if (id === 's-copia') { E.clip = { origem: E.est.vendo, ids: [...ids] }; atualizaSelUi(); return toast(`${ids.length} copiado${ids.length > 1 ? 's' : ''}. Troque de cena e cole.`); }
+  if (id === 's-dup') return agir('elementosLote', { op: 'dup', ids }).then((j) => { if (j && j.novos) { mapa.selEl = new Set(j.novos); mapa.avisaSel(); } });
+  if (id === 's-trava') { const todos = elsSel().every((x) => x.lock); return agir('elementosLote', { op: 'lock', ids, lock: !todos }); }
+  if (id === 's-del') { const trav = elsSel().filter((x) => x.lock).length; if (ids.length > 1 && !confirm(`Remover ${ids.length - trav} elemento(s) desta cena?${trav ? ` (${trav} travado(s) ficam)` : ''}`)) return; return agir('elementosLote', { op: 'del', ids }).then((j) => { if (j && j.travados) toast('Elementos travados não foram removidos'); }); }
+  if (id === 's-paracena') { const d = $('#s-cena').value; if (!d) return; return agir('elementosLote', { op: 'paracena', ids, destino: d }).then((j) => { if (j && j.ok) toast('Copiado para a outra cena'); }); }
+}
+$('#tools-sel').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b && b.id) acaoSel(b.id); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && mapa && mapa.ferr === 'regua') mapa.limpaReguas(); });
+document.addEventListener('keydown', (e) => {
+  if (!mapa || mapa.ferr !== 'selecionar' || !E.est || !souMestre()) return;
+  const el = document.activeElement; if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+  const ctrl = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); acaoSel('s-del'); }
+  else if (ctrl && k === 'c') { e.preventDefault(); acaoSel('s-copia'); }
+  else if (ctrl && k === 'v') { e.preventDefault(); acaoSel('s-cola'); }
+  else if (ctrl && k === 'd') { e.preventDefault(); acaoSel('s-dup'); }
+  else if (!ctrl && k === 'l') acaoSel('s-trava');
+  else if (e.key === 'Escape') mapa.limpaSelecao();
 });
 $('#tools-parede').addEventListener('click',e=>{const b=e.target.closest('button[data-pm]');if(!b)return;document.querySelectorAll('#tools-parede [data-pm]').forEach(x=>x.classList.toggle('on',x===b));mapa.setParedeFerr({modo:b.dataset.pm});$('#p-dica').textContent={parede:'Arraste livremente; pontas proximas se unem.',porta:'Arraste livremente; toque numa parede para converter.',abrir:'Clique para abrir/fechar; clique duplo para trancar/destrancar.',apagar:'Toque numa parede ou porta para apagar.'}[b.dataset.pm];});
 $('#tools-nevoa').addEventListener('click', (e) => {
@@ -601,7 +683,7 @@ function atualizaPainel(forca) {
     if (identidade) { const v = identidade.value, meus = j.tokens.filter((t) => souMestre() || t.dono === E.pid); identidade.innerHTML = '<option value="">' + esc(E.nome || 'Meu nome') + '</option>' + (souMestre() ? '<option value="__mestre">Falar como Mestre</option>' : '') + meus.map((t) => `<option value="${esc(t.id)}">${esc(t.nome)}</option>`).join(''); identidade.value = v; if (![...identidade.options].some((o) => o.value === v)) identidade.value = ''; }
     const tts = $('#chat-tts'); if (tts && document.activeElement !== tts) tts.checked = !!ls.get('ml.chat.tts', false);
   } else if (E.aba === 'elementos') {
-    const ul = $('#lista-elementos'); if (ul) ul.innerHTML = (j.elementos || []).map((x) => `<li data-el="${esc(x.id)}" data-id="${esc(x.id)}"><span class="thumb"><img src="${esc(urlElemento(x))}" alt=""></span><span class="lib-nome">${esc(x.nome)}</span><button class="b mini" data-act="el-vis">${x.vis === false ? 'Oculto' : 'Visível'}</button><button class="b mini" data-act="el-menos" aria-label="Diminuir tamanho">−</button><button class="b mini" data-act="el-mais" aria-label="Aumentar tamanho">+</button><button class="b mini" data-act="el-del">Remover</button></li>`).join('') || '<li class="dica">Nenhum elemento nesta cena.</li>';
+    const ul = $('#lista-elementos'); if (ul) ul.innerHTML = (j.elementos || []).map((x) => `<li data-el="${esc(x.id)}" data-id="${esc(x.id)}"><span class="thumb"><img src="${esc(urlElemento(x))}" alt=""></span><span class="lib-nome">${esc(x.nome)}</span><button class="b mini" data-act="el-lock">${x.lock ? 'Travado' : 'Travar'}</button><button class="b mini" data-act="el-vis">${x.vis === false ? 'Oculto' : 'Visível'}</button><button class="b mini" data-act="el-menos" aria-label="Diminuir tamanho">−</button><button class="b mini" data-act="el-mais" aria-label="Aumentar tamanho">+</button><button class="b mini" data-act="el-del">Remover</button></li>`).join('') || '<li class="dica">Nenhum elemento nesta cena.</li>';
   } else if (E.aba === 'mesa') {
     atualizaSync(); $('#m-clima').checked = !!ls.get('ml.clima', true);
     $('#jogs').innerHTML = j.jog.map((x) => `<li>${esc(x.nome)} ${x.mestre ? '<span class="tag">Mestre</span>' : ''} ${x.id === E.pid ? '<small>(você)</small>' : ''}</li>`).join('');
@@ -681,6 +763,7 @@ painel.addEventListener('click', async (e) => {
   const id = li.dataset.id, tk = E.est.tokens.find((x) => x.id === id) || (E.est.biblioteca || []).find((x) => x.id === id), elemento = (E.est.elementos || []).find((x) => x.id === id);
   if (elemento) {
     if (t.dataset.act === 'el-del') return confirm(`Remover “${elemento.nome}” desta cena?`) ? agir('elementoDel', { id }) : undefined;
+    if (t.dataset.act === 'el-lock') return agir('elementoEdit', { id, lock: !elemento.lock });
     if (t.dataset.act === 'el-vis') return agir('elementoEdit', { id, vis: elemento.vis === false });
     if (t.dataset.act === 'el-mais' || t.dataset.act === 'el-menos') { const k = t.dataset.act === 'el-mais' ? 1.15 : 1 / 1.15; return agir('elementoEdit', { id, w: Math.round(elemento.w * k), h: Math.round(elemento.h * k) }); }
   }

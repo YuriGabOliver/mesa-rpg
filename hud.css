@@ -12,7 +12,7 @@
 #palco{position:absolute;inset:0}
 
 /* superfície flutuante comum */
-#hud-id .id-pill,#rail,#tools,#tools-parede,#tools-nevoa,#zoom,#faixa,#mesa #painel{
+#hud-id .id-pill,#rail,#tools,#tools-parede,#tools-nevoa,#tools-regua,#tools-sel,#tools-dese,#zoom,#faixa,#mesa #painel{
   background:var(--float);border:1px solid var(--line);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);box-shadow:0 8px 26px #0005}
 
 /* ---------- canto: identidade ---------- */
@@ -54,10 +54,10 @@
 :root[data-tema="claro"] .ferr.on,:root[data-tema="claro"] .rb.on{color:#fff}
 
 /* opções da ferramenta escolhida: aparecem logo acima do dock */
-#tools-parede,#tools-nevoa{position:absolute;left:50%;top:auto;bottom:calc(92px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:center;padding:8px;border-radius:18px;max-width:min(94%,660px);z-index:4}
-#tools-parede .b,#tools-nevoa .b{min-height:34px;padding:5px 12px;font-size:13px;border-radius:99px}
-#tools-parede .b.on,#tools-nevoa .b.on{background:var(--acc);color:#1a1209;border-color:var(--acc)}
-#tools-parede .sep,#tools-nevoa .sep{width:1px;height:22px;background:var(--line)}
+#tools-parede,#tools-nevoa,#tools-regua,#tools-sel,#tools-dese{position:absolute;left:50%;top:auto;bottom:calc(92px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:center;padding:8px;border-radius:18px;max-width:min(94%,660px);z-index:4}
+#tools-parede .b,#tools-nevoa .b,#tools-regua .b,#tools-sel .b,#tools-dese .b{min-height:34px;padding:5px 12px;font-size:13px;border-radius:99px}
+#tools-parede .b.on,#tools-nevoa .b.on,#tools-regua .b.on,#tools-dese .b.on{background:var(--acc);color:#1a1209;border-color:var(--acc)}
+#tools-parede .sep,#tools-nevoa .sep,#tools-regua .sep,#tools-sel .sep,#tools-dese .sep{width:1px;height:22px;background:var(--line)}
 #tools-parede #p-dica{flex-basis:100%;text-align:center;margin:0;font-size:12px}
 #tools-nevoa .raio{margin:0;font-size:12px}
 
@@ -88,12 +88,12 @@ details.novo summary::-webkit-details-marker{display:none}
 /* ---------- telas menores ---------- */
 @media (max-width:900px){
   /* com o painel aberto, as ferramentas do mapa saem da frente (o painel ocupa o espaço) */
-  #mesa.painel-aberto #tools,#mesa.painel-aberto #tools-parede,#mesa.painel-aberto #tools-nevoa{display:none}
+  #mesa.painel-aberto #tools,#mesa.painel-aberto #tools-parede,#mesa.painel-aberto #tools-nevoa,#mesa.painel-aberto #tools-regua,#mesa.painel-aberto #tools-sel,#mesa.painel-aberto #tools-dese{display:none}
   #faixa{top:calc(86px + env(safe-area-inset-top,0px));max-width:calc(100% - 24px)}
 }
 @media (min-width:901px){
   /* com o painel aberto, o dock fica centralizado no pedaço de mapa que sobrou */
-  #mesa.painel-aberto #tools,#mesa.painel-aberto #tools-parede,#mesa.painel-aberto #tools-nevoa{left:calc((100% - 452px) / 2)}
+  #mesa.painel-aberto #tools,#mesa.painel-aberto #tools-parede,#mesa.painel-aberto #tools-nevoa,#mesa.painel-aberto #tools-regua,#mesa.painel-aberto #tools-sel,#mesa.painel-aberto #tools-dese{left:calc((100% - 452px) / 2)}
 }
 @media (max-width:520px){
   .rb{width:54px;min-height:50px}
@@ -135,3 +135,12 @@ details.novo summary::-webkit-details-marker{display:none}
 .b.perigo-s{color:var(--bad);border-color:var(--bad)}
 #t-sair{padding:4px 7px;min-height:34px}
 #t-sair .ic{width:18px;height:18px}
+
+/* v0.12: faixas da régua, seleção e desenho */
+#tools-regua[hidden],#tools-sel[hidden],#tools-dese[hidden]{display:none}
+#tools-regua,#tools-sel,#tools-dese{max-width:min(94%,760px)}
+#tools-regua .raio,#tools-sel .raio,#tools-dese .raio{margin:0;font-size:12px;display:flex;align-items:center;gap:5px;color:var(--mut)}
+#tools-dese input[type=color]{width:38px;height:34px;padding:2px;border-radius:10px}
+#tools-dese input[type=range]{width:84px}
+#tools-sel select,#tools-regua select{min-height:34px;max-width:150px}
+.ferr{min-width:60px}
