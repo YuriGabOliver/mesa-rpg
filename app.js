@@ -82,6 +82,7 @@ async function iniciaRealtime(m) {
       .on('presence', { event: 'sync' }, () => { try { aplicaPresenca(E.canal.presenceState()); } catch { /* ok */ } })
       .on('broadcast', { event: 'arrasto' }, (m) => recebeArrasto(m && m.payload))
       .on('broadcast', { event: 'regua' }, (m) => recebeRegua(m && m.payload))
+      .on('broadcast', { event: 'traco' }, (m) => recebeTraco(m && m.payload))
       .on('broadcast', { event: 'mudou' }, () => { clearTimeout(deb); deb = setTimeout(() => poll(true), 30); })
       .subscribe((status) => { E.rtOk = status === 'SUBSCRIBED'; if (E.rtOk) { poll(true); anunciaPresenca(); } atualizaSync(); sincronizaJog(); });
   } catch { E.rtOk = false; }
@@ -120,6 +121,19 @@ function recebeRegua(p) {
   mapa.setReguaRemota(p.pid, { f: p.f, pts: p.pts, b: p.b, larg: Math.min(6, Math.max(1, Number(p.larg) || 1)), perm: !!p.perm, fim: !!p.fim, cor: corDe(p.pid), nome: String(p.nome || '').slice(0, 24) });
 }
 window.__recebeRegua = recebeRegua;
+/* ---------- desenho ao vivo: só os pontos novos (~16x/s) pelo Realtime; o desenho final vai ao banco como sempre ---------- */
+function recebeTraco(p) { if (!p || !E.est || !mapa || p.pid === E.pid || !(E.est.jog || []).some((j) => j.id === p.pid)) return; mapa.tracoRemoto(p); }
+let trcUlt = 0, trcTimer = null, trcBuf = null;
+function emiteTraco(p) { trcUlt = performance.now(); try { const r = E.canal.send({ type: 'broadcast', event: 'traco', payload: { ...p, pid: E.pid } }); if (r && r.catch) r.catch(() => {}); } catch { /* sem tempo real: aparece ao terminar */ } }
+function enviaTraco(info, fim) {
+  if (!E.rtOk || !E.canal) return;
+  if (info) { if (trcBuf && !info.ini && trcBuf.add && info.add) trcBuf = { ...info, ini: trcBuf.ini, add: trcBuf.add.concat(info.add) }; else trcBuf = info; }
+  const manda = (extra = {}) => { const q = trcBuf; trcBuf = null; if (q) emiteTraco({ ...q, ...extra }); else if (extra.fim) emiteTraco({ fim: true }); };
+  if (fim) { clearTimeout(trcTimer); trcTimer = null; return manda({ fim: true }); }
+  const espera = 60 - (performance.now() - trcUlt);
+  if (espera <= 0) { clearTimeout(trcTimer); trcTimer = null; return manda(); }
+  if (!trcTimer) trcTimer = setTimeout(() => { trcTimer = null; manda(); }, espera);
+}
 function atualizaSync() { const el = $('#m-sync'); if (el) el.textContent = E.rtOk ? 'Sincronização: tempo real ativo.' : 'Sincronização: consulta periódica (alguns segundos de atraso).'; }
 
 /* ---------- utilidades ---------- */
@@ -239,7 +253,8 @@ function iniciaMapa() {
     onMoverElemento: (id, x, y) => { agir('elementoMove', { id, x, y }); },
     onRegua: enviaRegua,
     onLote: (o) => agir('elementosLote', o),
-    onSelecaoEl: (ids) => { E.selEl = ids; atualizaSelUi(); },
+    onSelecaoEl: (ids, des) => { E.selEl = ids; E.selDes = des || []; atualizaSelUi(); },
+    onTracando: enviaTraco,
     onDesenho: (d) => agir('desenhoAdd', d),
     onDesenhoDel: (d) => { if (!souMestre() && d.dono !== E.pid) return toast('Você só apaga os seus desenhos'); agir('desenhoDel', { id: d.id }); },
     onNevoa: (op) => agir('nevoaAdd', { ops: [op] }),
@@ -428,10 +443,11 @@ $('#d-op').addEventListener('input', (e) => mapa.setDeseCfg({ op: Number(e.targe
 /* ---------- seleção de elementos ---------- */
 function elsSel() { return (E.selEl || []).map((id) => (E.est.elementos || []).find((x) => x.id === id)).filter(Boolean); }
 function atualizaSelUi() {
-  if (!E.est) return; const n = (E.selEl || []).length, ls_ = elsSel(), todosTrav = ls_.length && ls_.every((x) => x.lock);
-  $('#s-cont').textContent = n ? `${n} selecionado${n > 1 ? 's' : ''}` : 'Nada selecionado';
+  if (!E.est) return; const n = (E.selEl || []).length, nd = (E.selDes || []).length, ls_ = elsSel(), todosTrav = ls_.length && ls_.every((x) => x.lock);
+  $('#s-cont').textContent = n + nd ? `${n + nd} selecionado${n + nd > 1 ? 's' : ''}${nd ? ` (${nd} desenho${nd > 1 ? 's' : ''})` : ''}` : 'Nada selecionado';
   $('#s-trava').textContent = todosTrav ? 'Destravar' : 'Travar';
-  for (const id of ['s-dup', 's-copia', 's-trava', 's-del', 's-paracena']) $('#' + id).disabled = !n;
+  for (const id of ['s-dup', 's-copia', 's-trava', 's-paracena']) $('#' + id).disabled = !n;
+  $('#s-del').disabled = !(n + nd);
   $('#s-cola').disabled = !E.clip;
   const cur = $('#s-cena').value, cenas = (E.est.cenas || []).filter((c) => c.id !== E.est.vendo);
   const html = cenas.map((c) => `<option value="${esc(c.id)}">${esc(c.nome)}</option>`).join('');
@@ -439,13 +455,20 @@ function atualizaSelUi() {
   $('#s-cena').hidden = $('#s-paracena').hidden = !cenas.length;
 }
 function acaoSel(id) {
-  const ids = E.selEl || []; if (!E.est) return;
+  const ids = E.selEl || [], dids = E.selDes || []; if (!E.est) return;
   if (id === 's-cola') { if (!E.clip) return toast('Nada copiado'); return agir('elementosLote', { op: 'colar', origem: E.clip.origem, ids: E.clip.ids }).then(() => toast('Colado nesta cena')); }
-  if (!ids.length) return;
+  if (!ids.length && !(id === 's-del' && dids.length)) return;
   if (id === 's-copia') { E.clip = { origem: E.est.vendo, ids: [...ids] }; atualizaSelUi(); return toast(`${ids.length} copiado${ids.length > 1 ? 's' : ''}. Troque de cena e cole.`); }
   if (id === 's-dup') return agir('elementosLote', { op: 'dup', ids }).then((j) => { if (j && j.novos) { mapa.selEl = new Set(j.novos); mapa.avisaSel(); } });
   if (id === 's-trava') { const todos = elsSel().every((x) => x.lock); return agir('elementosLote', { op: 'lock', ids, lock: !todos }); }
-  if (id === 's-del') { const trav = elsSel().filter((x) => x.lock).length; if (ids.length > 1 && !confirm(`Remover ${ids.length - trav} elemento(s) desta cena?${trav ? ` (${trav} travado(s) ficam)` : ''}`)) return; return agir('elementosLote', { op: 'del', ids }).then((j) => { if (j && j.travados) toast('Elementos travados não foram removidos'); }); }
+  if (id === 's-del') {
+    const trav = elsSel().filter((x) => x.lock).length, total = ids.length - trav + dids.length;
+    if (ids.length + dids.length > 1 && !confirm(`Remover ${total} item(ns) desta cena?${trav ? ` (${trav} travado(s) ficam)` : ''}`)) return;
+    return (async () => { // em sequência: os dois mexem no mesmo registro da cena
+      if (dids.length) await agir('desenhoDel', { ids: dids });
+      if (ids.length) { const j = await agir('elementosLote', { op: 'del', ids }); if (j && j.travados) toast('Elementos travados não foram removidos'); }
+    })();
+  }
   if (id === 's-paracena') { const d = $('#s-cena').value; if (!d) return; return agir('elementosLote', { op: 'paracena', ids, destino: d }).then((j) => { if (j && j.ok) toast('Copiado para a outra cena'); }); }
 }
 $('#tools-sel').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b && b.id) acaoSel(b.id); });

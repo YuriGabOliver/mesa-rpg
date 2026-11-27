@@ -82,12 +82,22 @@ export const extras = {
   },
 
   /* ---------- seleção de elementos ---------- */
-  limpaSelecao() { if (this.selEl.size) { this.selEl.clear(); this.avisaSel(); } this.sujo = true; },
-  avisaSel() { if (this.cb.onSelecaoEl) this.cb.onSelecaoEl([...this.selEl]); },
+  limpaSelecao() { if (this.selEl.size || this.selDes.size) { this.selEl.clear(); this.selDes.clear(); this.avisaSel(); } this.sujo = true; },
+  avisaSel() { if (this.cb.onSelecaoEl) this.cb.onSelecaoEl([...this.selEl], [...this.selDes]); },
+  // desenhos também entram na seleção (para excluir um a um)
+  caixaDesenho(d) {
+    const p = d.p; if (d.k === 'rect') return { x1: p[0], y1: p[1], x2: p[0] + p[2], y2: p[1] + p[3] };
+    if (d.k === 'elipse') return { x1: p[0] - p[2], y1: p[1] - p[3], x2: p[0] + p[2], y2: p[1] + p[3] };
+    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity; for (let i = 0; i + 1 < p.length; i += 2) { x1 = Math.min(x1, p[i]); x2 = Math.max(x2, p[i]); y1 = Math.min(y1, p[i + 1]); y2 = Math.max(y2, p[i + 1]); }
+    return { x1, y1, x2, y2 };
+  },
+  podaSelDes() { const ids = new Set((this.cena.desenhos || []).map((d) => d.id)); let mud = false; for (const i of [...this.selDes]) if (!ids.has(i)) { this.selDes.delete(i); mud = true; } if (mud) this.avisaSel(); },
   selecionaRetangulo(a, b, soma) {
     const x1 = Math.min(a.x, b.x), x2 = Math.max(a.x, b.x), y1 = Math.min(a.y, b.y), y2 = Math.max(a.y, b.y);
     if (!soma) this.selEl.clear();
+    if (!soma) this.selDes.clear();
     for (const e of this.elementos) if (e.x + e.w / 2 >= x1 && e.x - e.w / 2 <= x2 && e.y + e.h / 2 >= y1 && e.y - e.h / 2 <= y2) this.selEl.add(e.id);
+    for (const d of this.cena.desenhos || []) { const q = this.caixaDesenho(d); if (q.x1 >= x1 && q.x2 <= x2 && q.y1 >= y1 && q.y2 <= y2) this.selDes.add(d.id); } // desenho só entra se couber inteiro na caixa
     this.avisaSel(); this.sujo = true;
   },
   desenhaSelecao() {
@@ -96,6 +106,7 @@ export const extras = {
       for (const e of this.elementos) if (e.lock) { g.font = `${16 * k}px system-ui,sans-serif`; g.textAlign = 'right'; g.textBaseline = 'top'; g.fillText('🔒', e.x + e.w / 2 - 2 * k, e.y - e.h / 2 + 2 * k); g.textAlign = 'start'; }
       for (const e of this.elementos) if (this.selEl.has(e.id)) { g.strokeStyle = e.lock ? '#e0654f' : '#4da3ff'; g.lineWidth = 2 * k; g.setLineDash([7 * k, 5 * k]); g.strokeRect(e.x - e.w / 2, e.y - e.h / 2, e.w, e.h); g.setLineDash([]); }
     }
+    for (const d of this.cena.desenhos || []) if (this.selDes.has(d.id)) { const q = this.caixaDesenho(d), f = d.esp / 2 + 3 * k; g.strokeStyle = '#4da3ff'; g.lineWidth = 2 * k; g.setLineDash([7 * k, 5 * k]); g.strokeRect(q.x1 - f, q.y1 - f, q.x2 - q.x1 + 2 * f, q.y2 - q.y1 + 2 * f); g.setLineDash([]); }
     if (this.marq) {
       const { a, b } = this.marq; g.fillStyle = 'rgba(77,163,255,.15)'; g.strokeStyle = '#4da3ff'; g.lineWidth = 1.5 * k;
       g.fillRect(a.x, a.y, b.x - a.x, b.y - a.y); g.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
@@ -111,7 +122,39 @@ export const extras = {
     else { g.moveTo(p[0], p[1]); for (let i = 2; i < p.length; i += 2) g.lineTo(p[i], p[i + 1]); if (p.length === 2) g.lineTo(p[0] + 0.01, p[1]); }
     g.stroke(); g.globalAlpha = 1;
   },
+  // desenho de outra pessoa em andamento (ao vivo); some quando o definitivo chega do servidor
+  tracoRemoto(p) {
+    if (!p || typeof p.pid !== 'string') return;
+    let r = this.tracosOutros.get(p.pid);
+    const ok = ['livre', 'linha', 'rect', 'elipse'];
+    if (p.ini || !r) { r = { k: ok.includes(p.k) ? p.k : 'livre', cor: /^#[0-9a-fA-F]{6}$/.test(p.cor) ? p.cor : '#ff3b30', esp: Math.min(40, Math.max(1, +p.esp || 4)), op: Math.min(1, Math.max(0.1, +p.op || 1)), pts: [], fim: false, t: 0 }; this.tracosOutros.set(p.pid, r); }
+    if (Array.isArray(p.add)) for (const q of p.add.slice(0, 80)) if (r.pts.length < 1500 && Number.isFinite(+q[0]) && Number.isFinite(+q[1])) r.pts.push([+q[0], +q[1]]);
+    if (Array.isArray(p.pts) && p.pts.length === 2) r.pts = p.pts.map((q) => [+q[0], +q[1]]);
+    r.t = performance.now(); if (p.fim) r.fim = true; this.sujo = true;
+  },
+  emiteTraco(a, b, fim = false) { // a = ação de desenho em andamento
+    if (!a) return; a.b = b;
+    if (!this.cb.onTracando) return;
+    const c = this.deseCfg, R = Math.round, p = { k: c.modo, cor: c.cor, esp: c.esp, op: c.op, ini: !a.env };
+    if (c.modo === 'livre') { const novos = a.pts.slice(a.env || 0).map((q) => [R(q.x), R(q.y)]); if (!novos.length && !p.ini && !fim) return; p.add = novos; a.env = a.pts.length; }
+    else { p.pts = [[R(a.pts[0].x), R(a.pts[0].y)], [R(b.x), R(b.y)]]; a.env = 1; }
+    this.cb.onTracando(p, fim);
+  },
+  desenhaTracosOutros() {
+    const agora = performance.now();
+    for (const [id, r] of this.tracosOutros) {
+      if (agora - r.t > (r.fim ? 4000 : 10000)) { this.tracosOutros.delete(id); continue; }
+      const pts = r.pts.map((q) => ({ x: q[0], y: q[1] })); if (!pts.length) continue;
+      const a = pts[0], b = r.k === 'livre' ? pts[pts.length - 1] : (pts[1] || a), R = Math.round; let d;
+      if (r.k === 'linha') d = { k: 'linha', p: [a.x, a.y, b.x, b.y] };
+      else if (r.k === 'rect') d = { k: 'rect', p: [Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y)] };
+      else if (r.k === 'elipse') d = { k: 'elipse', p: [(a.x + b.x) / 2, (a.y + b.y) / 2, Math.abs(b.x - a.x) / 2, Math.abs(b.y - a.y) / 2] };
+      else { const q = []; for (const v of pts) q.push(v.x, v.y); d = { k: 'livre', p: q }; }
+      this.traco({ ...d, cor: r.cor, esp: r.esp, op: r.op });
+    }
+  },
   desenhaDesenhos() {
+    this.desenhaTracosOutros();
     for (const d of this.cena.desenhos || []) this.traco(d);
     if (this.dese) this.traco(this.dese);
   },

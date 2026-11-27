@@ -468,9 +468,11 @@ export default async function handler(req, res) {
       const grava = async (d) => { const nc = { ...cena }; if (d.length) nc.desenhos = d; else delete nc.desenhos; await rest('PATCH', `cenas?mesa=eq.${m}&id=eq.${c.alvo}`, { corpo: { cena: nc }, prefer: 'return=minimal' }); await bump(m); };
       if (acao === 'desenhoLimpar') { exigeMestre(c); await grava([]); return res.status(200).json({ ok: true }); }
       if (acao === 'desenhoDel') {
-        const id = txt(b.id, 12), d = lista.find((x) => x.id === id); if (!d) throw new Http(404, 'Desenho nao encontrado');
-        if (!c.mestre && d.dono !== c.pid) throw new Http(403, 'Voce so apaga os seus desenhos');
-        await grava(lista.filter((x) => x.id !== id)); return res.status(200).json({ ok: true });
+        // um desenho (id) ou vários de uma vez (ids): uma gravação só, para não perder alterações
+        const ids = Array.isArray(b.ids) ? [...new Set(b.ids.map((i) => txt(i, 12)))].slice(0, 200) : [txt(b.id, 12)];
+        const alvo = lista.filter((x) => ids.includes(x.id)); if (!alvo.length) throw new Http(404, 'Desenho nao encontrado');
+        const meus = alvo.filter((x) => c.mestre || x.dono === c.pid); if (!meus.length) throw new Http(403, 'Voce so apaga os seus desenhos');
+        await grava(lista.filter((x) => !meus.includes(x))); return res.status(200).json({ ok: true, apagados: meus.length });
       }
       const k = txt(b.k, 8); if (!['livre', 'linha', 'rect', 'elipse'].includes(k)) throw new Http(400, 'Tipo de desenho invalido');
       const bruto = Array.isArray(b.p) ? b.p : []; const esperado = k === 'livre' ? null : 4;
